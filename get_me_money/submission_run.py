@@ -27,6 +27,13 @@ class CandidateRecord:
     warnings: list[str] = field(default_factory=list)
     revision_feedback: str = ""
 
+    # Cost accounting
+    build_cost: float = 0.0
+    judge_cost: float = 0.0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    duration_seconds: float = 0.0
+
     def compute_hash(self):
         self.content_hash = hashlib.sha256(self.content.encode()).hexdigest()[:16]
         return self.content_hash
@@ -78,6 +85,13 @@ class SubmissionRun:
     created_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
     total_cost: float = 0.0
+    jobspec_cost: float = 0.0
+    winplan_cost: float = 0.0
+    candidate_cost: float = 0.0
+    judge_cost: float = 0.0
+    tool_cost: float = 0.0
+    delegation_cost: float = 0.0
+    marketplace_fee: float = 0.0
     model: str = ""
     skills_used: list[str] = field(default_factory=list)
 

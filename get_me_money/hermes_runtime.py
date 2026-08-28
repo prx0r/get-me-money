@@ -29,9 +29,9 @@ class HermesRunner:
     async def run(self, opp: Opportunity, ev: Evaluation) -> dict[str, Any]:
         binary = shutil.which(self.config.hermes.binary) or self.config.hermes.binary
 
-        # Use job-specific workspace and hermes_home if provided by broker
-        if self.job_profile.get("hermes_home"):
-            workdir = Path(self.job_profile["workspace"]) if self.job_profile.get("workspace") else self.config.work_dir / f"{opp.platform.value}-{opp.id}"
+        # Workspace: explicit > default (always honor workspace if provided)
+        if self.job_profile.get("workspace"):
+            workdir = Path(self.job_profile["workspace"])
         else:
             workdir = self.config.work_dir / f"{opp.platform.value}-{opp.id}"
         workdir.mkdir(parents=True, exist_ok=True)
