@@ -62,12 +62,20 @@ class MarketAdapter:
                 not self.capabilities.requires_human)
 
 
-# Registry
+# Registry — all adapters
 from get_me_money.markets.apify import ApifyAdapter
 from get_me_money.markets.etsy import EtsyAdapter
 from get_me_money.markets.roblox import RobloxAdapter
 from get_me_money.markets.superhive import SuperhiveAdapter
 from get_me_money.markets.webflow import WebflowAdapter
+from get_me_money.markets.discord import DiscordAdapter
+from get_me_money.markets.youtube import YouTubeAdapter
+from get_me_money.markets.apple import AppleAdapter
+from get_me_money.markets.google_play import GooglePlayAdapter
+from get_me_money.markets.itchio import ItchioAdapter
+from get_me_money.markets.gumroad import GumroadAdapter
+from get_me_money.markets.github_market import GitHubMarketAdapter
+from get_me_money.markets.aws_market import AWSMarketAdapter
 
 MARKET_ADAPTERS = {
     "apify": ApifyAdapter,
@@ -75,6 +83,14 @@ MARKET_ADAPTERS = {
     "roblox": RobloxAdapter,
     "superhive": SuperhiveAdapter,
     "webflow": WebflowAdapter,
+    "discord": DiscordAdapter,
+    "youtube": YouTubeAdapter,
+    "apple": AppleAdapter,
+    "google_play": GooglePlayAdapter,
+    "itchio": ItchioAdapter,
+    "gumroad": GumroadAdapter,
+    "github_market": GitHubMarketAdapter,
+    "aws_market": AWSMarketAdapter,
 }
 
 
@@ -88,6 +104,7 @@ def get_adapter(market: str, **kwargs) -> MarketAdapter:
 def list_markets() -> list[dict]:
     return [
         {"name": k, "discover": v().capabilities.discover,
-         "create": v().capabilities.create, "publish": v().capabilities.publish}
+         "create": v().capabilities.create, "publish": v().capabilities.publish,
+         "autonomous": v().can_operate_autonomously()}
         for k, v in MARKET_ADAPTERS.items()
     ]
