@@ -155,3 +155,89 @@ test("title preserved", found[0].title == "roundtrip test" if found else False)
 print(f"\n=== RESULTS: {PASS} passed, {FAIL} failed ===")
 if FAIL > 0:
     sys.exit(1)
+
+# 13. Workshop workers load
+print("\n13. Workshop workers load")
+from get_me_money.workshop import list_workers, list_blueprints, BLUEPRINTS, WORKERS
+test("workers defined", len(WORKERS) > 0)
+test("blueprints defined", len(BLUEPRINTS) > 0)
+test("worker has skills", len(list(WORKERS.values())[0].skills) > 0)
+test("blueprint has steps", len(list(BLUEPRINTS.values())[0].steps) > 0)
+
+# 14. Market adapters register
+print("\n14. Market adapters register")
+from get_me_money.markets import list_markets, MARKET_ADAPTERS
+test("adapters registered", len(MARKET_ADAPTERS) > 0)
+test("13 adapters", len(MARKET_ADAPTERS) == 13)
+auto = [k for k, v in MARKET_ADAPTERS.items() if v().can_operate_autonomously()]
+test("10 autonomous adapters", len(auto) == 10)
+
+# 15. Factories load
+print("\n15. Factories load")
+from get_me_money.factories import list_factories, FACTORIES
+test("factories defined", len(FACTORIES) > 0)
+test("6 factories", len(FACTORIES) == 6)
+for f in FACTORIES.values():
+    test(f"factory {f.name} has steps", len(f.steps) > 0)
+    test(f"factory {f.name} has distribution", len(f.distribution) > 0)
+
+# 16. Supply chain round-trips
+print("\n16. Supply chain round-trips")
+from get_me_money.supply_chain import SupplyChain, Part, Product, Provenance
+import tempfile
+with tempfile.TemporaryDirectory() as td:
+    sc = SupplyChain(Path(td))
+    part = Part(name="test-dataset", type="dataset", price=0.05)
+    part_id = sc.add_part(part)
+    test("part saved", (Path(td) / "parts" / f"{part_id}.json").exists())
+    loaded = sc.load_part(part_id)
+    test("part loaded", loaded is not None)
+    test("part name preserved", loaded.name == "test-dataset" if loaded else False)
+
+# 17. Config loads
+print("\n17. WorkerConfig loads")
+from get_me_money.worker_config import list_configs, get_config
+test("configs defined", len(list_configs()) > 0)
+test("3 configs", len(list_configs()) == 3)
+r = get_config("researcher")
+test("researcher has factory", r.factory == "report" if r else False)
+test("researcher has skills", len(r.skills) > 0 if r else False)
+
+# 18. CLI help works
+print("\n18. CLI help")
+from get_me_money.cli import main
+from click.testing import CliRunner
+runner = CliRunner()
+result = runner.invoke(main, ["--help"])
+test("CLI runs", result.exit_code == 0)
+test("CLI has commands", "workshop" in result.output)
+
+# 19. Lab loads
+print("\n19. Lab module loads")
+from get_me_money.lab import lab_run
+test("lab_run callable", callable(lab_run))
+
+# 20. Employer loads
+print("\n20. Employer loads")
+from get_me_money.employer import decompose_task, MicroTask, Decomposition
+decomp = Decomposition(original_task="test", total_estimated_cost=1.0)
+decomp.micro_tasks.append(MicroTask(id="p1", title="subtask", estimated_reward=0.50))
+test("decomposition works", len(decomp.micro_tasks) == 1)
+
+# 21. Job loads
+print("\n21. CanonicalJob loads")
+from get_me_money.job import CanonicalJob, JobStatus, VenueBinding
+job = CanonicalJob(title="test job", reward=10.0)
+job.add_venue("taskmarket", "tm:abc")
+test("job has venue", len(job.venues) == 1)
+test("job spec hash", len(job.spec_hash()) == 16)
+test("job status", job.status == JobStatus.DRAFT)
+
+# 22. Oracle bridge loads
+print("\n22. Oracle bridge loads")
+from get_me_money.oracle_bridge import submit_to_oracle
+test("submit_to_oracle callable", callable(submit_to_oracle))
+
+print(f"\n=== RESULTS: {PASS} passed, {FAIL} failed ===")
+if FAIL > 0:
+    sys.exit(1)

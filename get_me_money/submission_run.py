@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,11 @@ class CandidateRecord:
 @dataclass
 class SubmissionRun:
     """One complete submission attempt — from task to outcome to lesson."""
+
+    # IDs (stable references across the chain)
+    id: str = field(default_factory=lambda: f"run-{uuid.uuid4().hex[:12]}")
+    attempt_id: str = ""  # links to Attempt.id
+    workrun_id: str = ""  # links to WorkRun.id
 
     # Task
     task_title: str = ""

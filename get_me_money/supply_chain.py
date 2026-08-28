@@ -256,15 +256,18 @@ class SupplyChain:
 # Patch save/load onto dataclasses
 def _part_save(self, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(self.to_dict(), indent=2))
+    target = path if path.suffix == ".json" else path.with_suffix(".json")
+    target.write_text(json.dumps(self.to_dict(), indent=2))
 
 def _build_save(self, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(self.to_dict(), indent=2))
+    target = path if path.suffix == ".json" else path.with_suffix(".json")
+    target.write_text(json.dumps(self.to_dict(), indent=2))
 
 def _product_save(self, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(self.to_dict(), indent=2))
+    target = path if path.suffix == ".json" else path.with_suffix(".json")
+    target.write_text(json.dumps(self.to_dict(), indent=2))
 
 Part.save = _part_save
 Build.save = _build_save
