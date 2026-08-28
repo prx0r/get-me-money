@@ -141,7 +141,7 @@ async def run_submission_loop(
         candidate = CandidateRecord(version=round_num + 1)
         try:
             build_result = await asyncio.wait_for(
-                _build_candidate(config, opp, jobspec, winplan, work_dir, judge_feedback),
+                _build_candidate(config, opp, jobspec, winplan, candidate_dir, judge_feedback),
                 timeout=HERMES_TIMEOUT * 2,  # builds take longer
             )
             candidate.content = build_result.get("content", "")
@@ -359,7 +359,7 @@ DO THE ACTUAL WORK. Write deliverables to files. Write final submission to SUBMI
         category=opp.category, reward=opp.reward, currency=opp.currency,
     )
     ev = Evaluation(opportunity_id=opp.id, probability_of_success=0.5, ev_cash=0, estimated_cost=0.01)
-    runner = HermesRunner(config)
+    runner = HermesRunner(config, job_profile={"workspace": str(work_dir)})
     return await runner.run(opp_enriched, ev)
 
 

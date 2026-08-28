@@ -85,8 +85,14 @@ class WorkRun:
     completed_at: float = 0.0
 
     def content_hash(self) -> str:
-        """Deterministic hash of the run for content addressing."""
-        raw = f"{self.job_title}:{self.agent_id}:{self.created_at}"
+        """Deterministic hash of the actual work artifacts for content addressing."""
+        parts = [
+            self.job_title,
+            self.job_description[:500],
+            self.artifact_content[:5000] if self.artifact_content else "",
+            str(self.artifact_files),
+        ]
+        raw = ":".join(parts)
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
     def to_dict(self) -> dict:
