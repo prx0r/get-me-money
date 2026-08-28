@@ -95,10 +95,16 @@ class HermesRunner:
 
         if proc.returncode != 0 or usage.get("failed") is True:
             raise HermesError(f"Hermes failed rc={proc.returncode}: {(err or out)[-1500:]}", measured_cost, usage)
-        if not primary.exists() or primary.stat().st_size < 50:
-            raise HermesError("Hermes returned without a non-trivial SUBMISSION.md artifact", measured_cost, usage)
 
+        # Parse response: extract JSON metadata and submission content
         final_meta = self._extract_json(out)
+        content = self._extract_content(out)
+
+        # Write SUBMISSION.md from hermes response (hermes -z has no file tools)
+        if content and len(content) >= 50:
+            primary.write_text(content, encoding="utf-8")
+        elif not primary.exists() or primary.stat().st_size < 50:
+            raise HermesError("Hermes returned without usable submission content", measured_cost, usage)
         artifacts = [primary]
         for candidate in final_meta.get("artifacts", []) if isinstance(final_meta, dict) else []:
             p = (workdir / str(candidate)).resolve()
@@ -136,10 +142,12 @@ QUALITY BAR:
 2. Research/implement the actual task; do not merely describe what you would do.
 3. Verify factual claims and run relevant tests/checks.
 4. Critique your own draft against every acceptance criterion and improve it.
-5. Write the final submission to `SUBMISSION.md` in the current working directory.
-6. Put any additional deliverables in this directory too.
-7. Your final chat response MUST be one JSON object only, for example:
+5. Write your complete submission as your response text below.
+6. Your final response MUST contain the full deliverable content.
+7. Your final response MUST end with exactly this JSON on its own line:
    {{"completed":true,"artifacts":["SUBMISSION.md"],"url":"","pr_url":"","submission":{{}}}}
+
+IMPORTANT: You do NOT have file system access. Return your submission content as text in your response. The controller will write it to SUBMISSION.md.
 
 OPPORTUNITY METADATA:
 platform={opp.platform.value}
@@ -182,3 +190,16 @@ RAW METADATA:
             except Exception:
                 pass
         return {}
+
+    @staticmethod
+    def _extract_content(text: str) -> str:
+        """Extract the submission content from hermes response (everything before the final JSON)."""
+        text = text.strip()
+        # Find the last JSON object in the response
+        m = re.search(r"\{[\"']completed[\"'].*\}", text, re.S)
+        if m:
+            # Everything before the JSON is the content
+            content = text[:m.start()].strip()
+            return content
+        # No JSON found — return the whole response as content
+        return text
