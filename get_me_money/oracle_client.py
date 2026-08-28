@@ -1,15 +1,16 @@
-"""Oracle client — bridges get-me-money submission loop to the oracle dataset.
+"""Oracle client — unified search across all sources.
 
-Works two ways:
-  1. Remote: calls oracle API (http://localhost:8788/v1/*)
-  2. Embedded: imports oracle directly (same process)
+Queries:
+  - Local oracle DB (Taskmarket, etc.)
+  - Apify Store (51K+ tools with real usage data)
+  - Future: any adapter that implements search()
 
 The oracle provides WHAT WORK EXISTS.
 The submission loop provides HOW TO WIN IT.
-This client bridges the two.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -20,7 +21,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class OracleOpportunity:
-    """Normalized opportunity from the oracle."""
+    """Normalized opportunity from any source."""
     id: str = ""
     source: str = ""
     source_id: str = ""
@@ -46,20 +47,20 @@ class OracleOpportunity:
 
 
 class OracleClient:
-    """Client for the Moltwork Oracle.
+    """Unified oracle: queries local DB + live adapters.
 
     Usage:
-        oracle = OracleClient()  # connects to localhost:8788
-        opps = oracle.search(skills=["python", "research"], min_reward=10)
-        opp = oracle.get(opportunity_id)
+        oracle = OracleClient()
+        opps = oracle.search(skills=["python"], min_reward=10)
+        # Returns both Taskmarket bounties AND Apify tools
     """
 
     def __init__(self, base_url: str = "http://localhost:8788"):
         self.base_url = base_url.rstrip("/")
         self._db = None
+        self._apify = None
 
     def _get_db(self):
-        """Try to import oracle DB directly (embedded mode)."""
         if self._db is not None:
             return self._db
         try:
@@ -71,23 +72,117 @@ class OracleClient:
         except Exception:
             return None
 
-    def search(self, skills: list[str] | None = None, min_reward: float = 0,
+    def _get_apify(self):
+        if self._apify is not None:
+            return self._apify
+        try:
+            from get_me_money.markets.apify import ApifyAdapter
+            self._apify = ApifyAdapter()
+            return self._apify
+        except Exception:
+            return None
+
+    async def search(self, skills: list[str] | None = None, min_reward: float = 0,
                source: str | None = None, category: str | None = None,
                limit: int = 50) -> list[OracleOpportunity]:
-        """Search opportunities from the oracle."""
-        # Try embedded mode first
+        """Search across all sources: local DB + live adapters."""
+        results = []
+
+        # Source 1: Local oracle DB
         db = self._get_db()
         if db:
-            return self._search_db(db, skills, min_reward, source, category, limit)
+            results.extend(self._search_db(db, skills, min_reward, source, category, limit))
 
-        # Fall back to API
-        return self._search_api(skills, min_reward, source, category, limit)
+        # Source 2: Apify (live)
+        apify = self._get_apify()
+        if apify:
+            try:
+                apify_results = await self._search_apify(apify, skills, limit)
+                results.extend(apify_results)
+            except Exception as e:
+                log.warning(f"Apify search failed: {e}")
+
+        # Deduplicate by title
+        seen = set()
+        unique = []
+        for r in results:
+            key = r.title.lower().strip()
+            if key not in seen:
+                seen.add(key)
+                unique.append(r)
+
+        return unique[:limit]
+
+    def search_sync(self, skills: list[str] | None = None, min_reward: float = 0,
+               source: str | None = None, category: str | None = None,
+               limit: int = 50) -> list[OracleOpportunity]:
+        """Synchronous search — queries DB + Apify."""
+        results = []
+        db = self._get_db()
+        if db:
+            results.extend(self._search_db(db, skills, min_reward, source, category, limit))
+
+        # Apify sync search
+        try:
+            from get_me_money.markets.apify import ApifyAdapter
+            import urllib.parse, urllib.request
+            apify = ApifyAdapter()
+            query = " ".join(skills) if skills else ""
+            url = f"{apify.base}/store?limit={min(limit, 20)}"
+            if query:
+                url += f"&search={urllib.parse.quote(query)}"
+            req = urllib.request.Request(url, headers=apify._headers())
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = json.loads(resp.read())
+                items = raw.get("data", {}).get("items", [])
+                for a in items:
+                    results.append(OracleOpportunity(
+                        id=f"apify:{a.get('username','')}/{a.get('name','')}",
+                        source="apify",
+                        source_id=a.get("name", ""),
+                        title=a.get("title", ""),
+                        reward_usd=0,
+                        category=a.get("category", "tool"),
+                        skills=skills or [],
+                        status="active",
+                        url=f"https://apify.com/{a.get('username','')}/{a.get('name','')}",
+                        raw=a.get("stats", {}),
+                    ))
+        except Exception as e:
+            log.warning(f"Apify sync search failed: {e}")
+
+        seen = set()
+        unique = []
+        for r in results:
+            key = r.title.lower().strip()
+            if key not in seen:
+                seen.add(key)
+                unique.append(r)
+        return unique[:limit]
+
+    async def _search_apify(self, apify, skills, limit) -> list[OracleOpportunity]:
+        """Search Apify Store for tools."""
+        query = " ".join(skills) if skills else ""
+        results = await apify.search(query, limit=min(limit, 20))
+        return [
+            OracleOpportunity(
+                id=f"apify:{r.listing_id}",
+                source="apify",
+                source_id=r.listing_id,
+                title=r.title,
+                reward_usd=0,  # usage-based, not fixed price
+                category=r.stats.get("category", "tool"),
+                skills=skills or [],
+                status="active",
+                url=f"https://apify.com/{r.listing_id}",
+                raw=r.stats,
+            )
+            for r in results
+        ]
 
     def _search_db(self, db, skills, min_reward, source, category, limit):
-        """Search directly against oracle SQLite."""
         query = "SELECT * FROM opportunities WHERE 1=1"
         params = []
-
         if min_reward > 0:
             query += " AND reward_usd >= ?"
             params.append(min_reward)
@@ -97,7 +192,6 @@ class OracleClient:
         if category:
             query += " AND category = ?"
             params.append(category)
-
         query += " ORDER BY reward_usd DESC LIMIT ?"
         params.append(limit)
 
@@ -107,19 +201,15 @@ class OracleClient:
             for row in rows:
                 d = dict(row)
                 opp = OracleOpportunity(
-                    id=d.get("id", ""),
-                    source=d.get("source", ""),
-                    source_id=d.get("source_id", ""),
-                    title=d.get("title", ""),
+                    id=d.get("id", ""), source=d.get("source", ""),
+                    source_id=d.get("source_id", ""), title=d.get("title", ""),
                     description=d.get("description", ""),
                     reward_usd=float(d.get("reward_usd", 0) or 0),
                     category=d.get("category", ""),
                     skills=self._parse_skills(d.get("skills", "")),
-                    status=d.get("status", ""),
-                    url=d.get("url", ""),
+                    status=d.get("status", ""), url=d.get("url", ""),
                     competition=int(d.get("competition", 0) or 0),
                 )
-                # Filter by skills if specified
                 if skills:
                     opp_skills = set(s.lower() for s in opp.skills)
                     query_skills = set(s.lower() for s in skills)
@@ -131,54 +221,7 @@ class OracleClient:
             log.warning(f"DB search failed: {e}")
             return []
 
-    def _search_api(self, skills, min_reward, source, category, limit):
-        """Search via REST API."""
-        import urllib.request
-        params = []
-        if skills:
-            params.append(f"skills={','.join(skills)}")
-        if min_reward > 0:
-            params.append(f"min_reward={min_reward}")
-        if source:
-            params.append(f"source={source}")
-        if category:
-            params.append(f"category={category}")
-        params.append(f"limit={limit}")
-
-        url = f"{self.base_url}/v1/opportunities?{'&'.join(params)}"
-        try:
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-                return [OracleOpportunity(**o) for o in data.get("opportunities", [])]
-        except Exception as e:
-            log.warning(f"API search failed: {e}")
-            return []
-
-    def get(self, opportunity_id: str) -> OracleOpportunity | None:
-        """Get a single opportunity by ID."""
-        db = self._get_db()
-        if db:
-            try:
-                row = db.execute("SELECT * FROM opportunities WHERE id=?", (opportunity_id,)).fetchone()
-                if row:
-                    d = dict(row)
-                    return OracleOpportunity(
-                        id=d.get("id", ""), source=d.get("source", ""),
-                        source_id=d.get("source_id", ""), title=d.get("title", ""),
-                        description=d.get("description", ""),
-                        reward_usd=float(d.get("reward_usd", 0) or 0),
-                        category=d.get("category", ""),
-                        skills=self._parse_skills(d.get("skills", "")),
-                        status=d.get("status", ""), url=d.get("url", ""),
-                        competition=int(d.get("competition", 0) or 0),
-                    )
-            except Exception:
-                pass
-        return None
-
     def trending_skills(self, window: str = "30d", limit: int = 20) -> list[dict]:
-        """Get trending skills from demand data."""
         db = self._get_db()
         if db:
             try:
@@ -186,9 +229,7 @@ class OracleClient:
                     SELECT skill, SUM(reward_usd) as total_reward, COUNT(*) as opportunities
                     FROM opportunity_skills
                     JOIN opportunities ON opportunity_skills.opportunity_id = opportunities.id
-                    GROUP BY skill
-                    ORDER BY total_reward DESC
-                    LIMIT ?
+                    GROUP BY skill ORDER BY total_reward DESC LIMIT ?
                 """, (limit,)).fetchall()
                 return [dict(r) for r in rows]
             except Exception:
@@ -196,7 +237,6 @@ class OracleClient:
         return []
 
     def stats(self) -> dict:
-        """Get oracle statistics."""
         db = self._get_db()
         if db:
             try:
