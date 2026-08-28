@@ -12,6 +12,7 @@ from get_me_money.ledger import get_daily_spend, get_lifetime_spend, load_attemp
 from get_me_money.models import Opportunity, Outcome, Platform
 from get_me_money.notifier import notify
 from get_me_money.platforms import BaseAdapter
+from get_me_money.platforms.bounty import BountyAdapter
 from get_me_money.platforms.taskmarket import TaskmarketAdapter
 from get_me_money.platforms.superteam import SuperteamAdapter
 
@@ -20,6 +21,8 @@ log = logging.getLogger(__name__)
 
 def get_adapters(config: Config) -> dict[Platform, BaseAdapter]:
     out: dict[Platform, BaseAdapter] = {}
+    if config.platforms.bounty_enabled:
+        out[Platform.BOUNTY] = BountyAdapter(api_key=config.platforms.bounty_api_key)
     if config.platforms.taskmarket_enabled:
         out[Platform.TASKMARKET] = TaskmarketAdapter()
     if config.platforms.superteam_enabled and config.platforms.superteam_key:

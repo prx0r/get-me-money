@@ -17,29 +17,32 @@ WORK_DIR = DATA_DIR / "work"
 
 @dataclass
 class Budget:
-    daily_cap: float = 1.00
-    per_attempt_cap: float = 0.25
-    lifetime_cap: float = 5.00
-    min_reward: float = 1.00
-    min_ev: float = 0.05
-    min_success_probability: float = 0.05
+    daily_cap: float = 5.00
+    per_attempt_cap: float = 1.00
+    lifetime_cap: float = 50.00
+    min_reward: float = 3.00
+    min_ev: float = 0.50
+    min_success_probability: float = 0.10
+    daily_target: float = 5.00
 
 
 @dataclass
 class PlatformConfig:
-    # Only verified live paths are enabled in v0.
+    # v0.3: TryBounty is primary cash surface
+    bounty_enabled: bool = True
     taskmarket_enabled: bool = True
     superteam_enabled: bool = True  # discovery; auto-submit is conservative
     gigs_enabled: bool = True
-    bounty_enabled: bool = False
     algora_enabled: bool = False
     opire_enabled: bool = False
     clustly_enabled: bool = False
 
+    bounty_api_key: str = ""
     superteam_key: str = ""
     superteam_telegram: str = ""
 
     def load_env(self) -> None:
+        self.bounty_api_key = os.getenv("BOUNTY_API_KEY", self.bounty_api_key)
         self.superteam_key = os.getenv("SUPERTEAM_KEY", self.superteam_key)
         self.superteam_telegram = os.getenv("SUPERTEAM_TELEGRAM", self.superteam_telegram)
 

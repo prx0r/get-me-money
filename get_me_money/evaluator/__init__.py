@@ -21,7 +21,7 @@ CATEGORY_HOURS = {
     TaskCategory.DESIGN: 2.0,
     TaskCategory.UNKNOWN: 1.5,
 }
-PLATFORM_FEES = {Platform.TASKMARKET: 0.075, Platform.SUPERTEAM: 0.0}
+PLATFORM_FEES = {Platform.TASKMARKET: 0.075, Platform.SUPERTEAM: 0.0, Platform.BOUNTY: 0.10}
 
 
 class Evaluator:
@@ -75,6 +75,9 @@ class Evaluator:
             p *= 1.25
         if opp.category in {TaskCategory.CODE_FEATURE, TaskCategory.DESIGN}:
             p *= 0.75
+        # TryBounty has proven demand for research/data — boost those tasks
+        if opp.platform == Platform.BOUNTY and opp.category in {TaskCategory.RESEARCH, TaskCategory.DATA_EXTRACTION}:
+            p *= 1.15
         if opp.competition_estimate >= 30:
             p *= 0.40
         elif opp.competition_estimate >= 15:

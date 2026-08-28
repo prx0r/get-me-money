@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "get-me-money"
-version = "0.2.0"
-description = "Autonomous earning controller: discover, evaluate, execute with Hermes, submit, reconcile real P&L."
+version = "0.3.0"
+description = "Autonomous earning controller: discover, evaluate, execute with Hermes, submit, reconcile real P&L. Primary: TryBounty + Taskmarket."
 requires-python = ">=3.11"
 dependencies = [
   "httpx>=0.27",
