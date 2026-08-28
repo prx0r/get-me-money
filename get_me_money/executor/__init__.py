@@ -1,4 +1,4 @@
-"""Execution lifecycle: acquire capabilities → build → verify → submit → reconcile."""
+"""Execution lifecycle: JobSpec → WinPlan → Build → Judge → Submit → Learn."""
 from __future__ import annotations
 
 import time
@@ -7,6 +7,7 @@ from get_me_money.config import Config
 from get_me_money.executor.workers import run_task
 from get_me_money.hermes_runtime import HermesRunner
 from get_me_money.hermes_runtime import HermesError
+from get_me_money.jobspec import JobSpec, WinPlan
 from get_me_money.models import Attempt, Evaluation, Opportunity, Outcome, Platform
 from get_me_money.platforms import BaseAdapter
 from get_me_money.verifier import Verifier
@@ -43,11 +44,9 @@ class Executor:
 
             # Step 2: Build job plan with capability broker
             plan = await self.broker.build_job_profile(opp)
-            a.metadata["capabilities_required"] = plan.capabilities.required if plan.capabilities else []
-            a.metadata["capabilities_acquiring"] = [ac.name for ac in plan.acquisitions]
             a.metadata["job_workspace"] = plan.workspace
 
-            # Step 3: Execute work via Hermes (with job profile for isolated skills)
+            # Step 3: Build job profile for hermes
             job_profile = {
                 "hermes_home": plan.hermes_home,
                 "workspace": plan.workspace,
@@ -64,25 +63,28 @@ class Executor:
                 a.finalize(Outcome.FAILED, cost=a.cost, error="Actual Hermes cost exceeded per-attempt cap; result not submitted")
                 return a
 
-            # Step 4: Independent verification
-            verifier = Verifier(result.get("workdir", ""))
+            # Step 4: Independent verification (deterministic gate + judge)
+            verifier = Verifier(result.get("workdir", ""), jobspec=result.get("jobspec"))
             vresult = await verifier.verify(
                 opp,
                 result.get("artifacts", []),
                 result.get("content", ""),
+                jobspec=result.get("jobspec"),
             )
             a.metadata["verification"] = {
-                "score": vresult.score,
+                "gate_passed": vresult.gate_passed,
+                "gate_score": vresult.gate_score,
+                "gate_checks": [{"name": c.name, "passed": c.passed, "message": c.message}
+                               for c in vresult.gate_checks],
+                "judge_score": vresult.judge_report.overall_score if vresult.judge_report else None,
                 "submittable": vresult.submittable,
-                "checks_passed": vresult.checks_passed,
-                "checks_failed": vresult.checks_failed,
                 "failures": vresult.failures,
                 "warnings": vresult.warnings,
             }
 
             if not vresult.submittable:
                 a.finalize(Outcome.FAILED, cost=a.cost,
-                           error=f"Verification failed (score={vresult.score:.2f}): {'; '.join(vresult.failures)}")
+                           error=f"Verification failed (gate={vresult.gate_passed}, score={vresult.score:.2f}): {'; '.join(vresult.failures)}")
                 return a
 
             # Step 5: Submit to platform
@@ -97,16 +99,17 @@ class Executor:
             a.updated_at = time.time()
             a.duration_seconds = time.time() - a.started_at
 
-            # Step 6: Record skill performance
-            skills_used = (plan.capabilities.already_available +
-                          [ac.name for ac in plan.acquisitions])
-            a.metadata["skills_used"] = skills_used
+            # Step 6: Record skills (use correct vocabulary)
+            a.metadata["skills_requested"] = plan.capabilities.required if plan.capabilities else []
+            a.metadata["skills_installed"] = plan.skills_installed
+            a.metadata["skills_activated"] = (plan.capabilities.already_available +
+                                              [ac.name for ac in plan.acquisitions])
 
             # Step 7: Check immediate status (some platforms settle instantly)
             status = await adapter.check_status(opp)
             self.apply_status(a, status)
 
-            # Step 8: Create WorkRun → Moltwork (Product + Receipt + Capability)
+            # Step 8: Create WorkRun → Moltwork (private run only — no receipt/product yet)
             if self.config.platforms.moltwork_enabled:
                 self._create_workrun(a, opp, ev, plan, result)
 
@@ -119,9 +122,14 @@ class Executor:
 
     def _create_workrun(self, a: Attempt, opp: Opportunity, ev: Evaluation,
                         plan: 'JobPlan', result: dict) -> None:
-        """Create WorkRun and send to Moltwork."""
+        """Create WorkRun and send to Moltwork (private run only)."""
+        import hashlib
         import httpx
         from get_me_money.workrun import WorkRun
+
+        # Hash actual artifacts, not just metadata
+        content = result.get("content", "")
+        artifact_hash = hashlib.sha256(content.encode()).hexdigest() if content else ""
 
         run = WorkRun(
             job_title=opp.title,
@@ -131,10 +139,10 @@ class Executor:
             job_reward=opp.reward,
             agent_id=self.config.platforms.moltwork_worker_id,
             category=opp.category.value,
-            tags=opp.tags + a.metadata.get("skills_used", []),
-            artifact_content=result.get("content", ""),
+            tags=opp.tags + a.metadata.get("skills_activated", []),
+            artifact_content=content,
             artifact_files=result.get("artifacts", []),
-            verification_score=a.metadata.get("verification", {}).get("score", 0),
+            verification_score=a.metadata.get("verification", {}).get("gate_score", 0),
             verification_passed=a.metadata.get("verification", {}).get("submittable", False),
             tokens_in=a.metadata.get("usage", {}).get("input_tokens", 0),
             tokens_out=a.metadata.get("usage", {}).get("output_tokens", 0),
@@ -144,7 +152,7 @@ class Executor:
             submission_url=a.submission_url,
             outcome=a.outcome.value,
             reward_earned=a.reward,
-            skills_activated=a.metadata.get("skills_used", []),
+            skills_activated=a.metadata.get("skills_activated", []),
         )
 
         try:
