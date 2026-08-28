@@ -132,18 +132,10 @@ async def run_submission_loop(
 
     # ── Step 2.5: Check execution_mode ──────────────────────────────────
     from get_me_money.models import ExecutionMode
-    if opp.execution_mode == ExecutionMode.HUMAN_LED:
-        log.info(f"  HUMAN_LED — skipping (human does core work)")
-        run.completed_at = time.time()
-        result.attempt = Attempt(
-            opportunity_id=opp.id, platform=opp.platform, external_id=opp.external_id,
-            title=opp.title,
-        )
-        result.attempt.finalize(Outcome.SKIPPED, error="Human-led opportunity")
-        return result
-
-    if opp.has_human_gates:
-        log.info(f"  Human gates: {len(opp.human_gates)} ({', '.join(g.stage for g in opp.human_gates)})")
+    if opp.execution_mode == ExecutionMode.HUMAN_GATED:
+        log.info(f"  HUMAN_GATED — agent produces, human handles gates")
+        if opp.has_human_gates:
+            log.info(f"    Gates: {', '.join(g.stage for g in opp.human_gates)}")
 
     # ── Step 3-5: Build + Judge + Revise ──────────────────────────────────
     # Bound counts — LLM never gets authority over spending ceiling

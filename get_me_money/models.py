@@ -59,20 +59,20 @@ class Outcome(str, Enum):
 # ─── Opportunity: the universal top-level object ─────────────────────
 
 class OpportunityType(str, Enum):
-    """What kind of economic opportunity is it?"""
-    TASK = "task"                    # bounty, freelance job, microtask
-    COMPETITION = "competition"      # hackathon, challenge, prize contest
-    PRODUCT_MARKET = "product_market"  # Roblox asset, Etsy template, app
-    SERVICE_MARKET = "service_market"  # x402 endpoint, MCP service, API
-    DEMAND_SIGNAL = "demand_signal"  # underserved search, market gap
+    """What kind of economic output does this produce?"""
+    DATA = "data"              # extraction, processing, monitoring
+    CODE = "code"              # bugs, features, integrations, tests
+    RESEARCH = "research"      # analysis, reports, intelligence
+    CONTENT = "content"        # writing, docs, templates
+    TOOL = "tool"              # Actor, API, MCP, app, plugin
+    ASSET = "asset"            # 3D model, design, template
+    SERVICE = "service"        # endpoint, worker, SaaS
 
 
 class ExecutionMode(int, Enum):
-    """How autonomously can an agent pursue this?"""
-    HUMAN_LED = 0       # human does core work
-    HUMAN_SUPERVISED = 1  # agent does work, human drives decisions
-    HUMAN_GATED = 2     # agent produces, human handles specific gates
-    AUTONOMOUS = 3      # agent does everything without routine human intervention
+    """How does it get to market?"""
+    AUTONOMOUS = 0       # agent does everything
+    HUMAN_GATED = 1      # agent produces, human handles 1-2 specific gates
 
 
 class RewardModel(str, Enum):
@@ -104,7 +104,7 @@ class Opportunity:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
     # What kind of opportunity
-    opportunity_type: OpportunityType = OpportunityType.TASK
+    opportunity_type: OpportunityType = OpportunityType.DATA
     category: TaskCategory = TaskCategory.UNKNOWN
 
     # How can it be executed?
