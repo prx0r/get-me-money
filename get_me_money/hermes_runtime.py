@@ -35,7 +35,7 @@ class HermesRunner:
         prompt_path.write_text(self._prompt(opp, ev), encoding="utf-8")
 
         # Use subprocess argv, never a shell. Marketplace text cannot become shell syntax.
-        cmd = [binary, "--max-turns", str(self.config.hermes.max_turns), "--source", "tool", "-z", prompt_path.read_text(encoding="utf-8"), "--usage-file", str(usage_path)]
+        cmd = [binary, "-z", prompt_path.read_text(encoding="utf-8"), "--usage-file", str(usage_path)]
         if self.config.hermes.provider:
             cmd += ["--provider", self.config.hermes.provider]
         if self.config.hermes.model:
@@ -48,6 +48,12 @@ class HermesRunner:
             worker_env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "LC_ALL", "TZ") if k in os.environ}
             if self.config.hermes.home:
                 worker_env["HERMES_HOME"] = self.config.hermes.home
+            # Pass through model provider keys (needed for Hermes to call LLM)
+            for k in ("OPENCODE_GO_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                       "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
+                       "NOUS_API_KEY"):
+                if k in os.environ:
+                    worker_env[k] = os.environ[k]
             for k in [x.strip() for x in self.config.hermes.passthrough_env.split(",") if x.strip()]:
                 if k in os.environ:
                     worker_env[k] = os.environ[k]

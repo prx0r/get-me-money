@@ -1,4 +1,4 @@
-"""Production CLI. Real marketplace writes require an explicit --execute flag."""
+"""Moltwork CLI — from agent to paid worker in one click."""
 from __future__ import annotations
 
 import asyncio
@@ -21,6 +21,7 @@ def _cfg() -> Config:
 @click.group()
 @click.option("--log-level", default="INFO")
 def main(log_level: str):
+    """Moltwork — from agent to paid worker in one click."""
     logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 

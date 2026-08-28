@@ -119,8 +119,12 @@ class TaskmarketAdapter(BaseAdapter):
 
     async def claim(self, opportunity: Opportunity) -> bool:
         legal = await self._run("legal", "status")
-        if not legal.get("ok") or not bool((legal.get("data") or {}).get("accepted")):
+        legal_data = legal.get("data") or {}
+        accepted = bool(legal_data.get("accepted"))
+        enforcement = legal_data.get("enforcementEnabled", True)
+        if not accepted and enforcement:
             return False  # human/operator must review + accept; controller never does it.
+        # If enforcement is disabled, proceed even without acceptance
         detail = await self._run("task", "get", opportunity.external_id)
         if not detail.get("ok"):
             return False

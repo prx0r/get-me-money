@@ -1,0 +1,45 @@
+{
+  "job_id": "taskmarket-8236e42d8541",
+  "platform": "taskmarket",
+  "external_id": "0x02c85a21787b5bc43e1d428939f4f91049c61e4ad7ce3cdebc41d29040447e68",
+  "title": "# Design 10 Original, Profitable x402 Agent Products",
+  "reward": 15.0,
+  "currency": "USDC",
+  "category": "code_fix",
+  "capabilities_required": [
+    "github-repo-management",
+    "github-issue-to-pr",
+    "superpowers",
+    "mp-diagnose",
+    "mp-tdd",
+    "mp-code-review",
+    "github-pr-workflow",
+    "wrangler",
+    "competitors",
+    "competitor-profiling"
+  ],
+  "capabilities_available": [
+    "github-repo-management",
+    "github-issue-to-pr",
+    "github-pr-workflow"
+  ],
+  "capabilities_acquiring": [
+    "superpowers",
+    "mp-diagnose",
+    "mp-tdd",
+    "mp-code-review",
+    "wrangler",
+    "competitors",
+    "competitor-profiling"
+  ],
+  "skills_trusted": [
+    "superpowers",
+    "mp-diagnose",
+    "mp-tdd",
+    "mp-code-review",
+    "wrangler",
+    "competitors",
+    "competitor-profiling"
+  ],
+  "skills_untrusted": []
+}

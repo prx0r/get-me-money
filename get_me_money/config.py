@@ -85,6 +85,16 @@ class Config:
     def load(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.work_dir.mkdir(parents=True, exist_ok=True)
+
+        # Load .env file if present
+        env_path = self.data_dir / ".env"
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ.setdefault(k.strip(), v.strip())
+
         cfg_path = self.data_dir / "config.json"
         if cfg_path.exists():
             raw = json.loads(cfg_path.read_text())
