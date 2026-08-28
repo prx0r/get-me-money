@@ -130,6 +130,21 @@ async def run_submission_loop(
         result.attempt.finalize(Outcome.SKIPPED, error=winplan.entry_decision)
         return result
 
+    # ── Step 2.5: Check execution_mode ──────────────────────────────────
+    from get_me_money.models import ExecutionMode
+    if opp.execution_mode == ExecutionMode.HUMAN_LED:
+        log.info(f"  HUMAN_LED — skipping (human does core work)")
+        run.completed_at = time.time()
+        result.attempt = Attempt(
+            opportunity_id=opp.id, platform=opp.platform, external_id=opp.external_id,
+            title=opp.title,
+        )
+        result.attempt.finalize(Outcome.SKIPPED, error="Human-led opportunity")
+        return result
+
+    if opp.has_human_gates:
+        log.info(f"  Human gates: {len(opp.human_gates)} ({', '.join(g.stage for g in opp.human_gates)})")
+
     # ── Step 3-5: Build + Judge + Revise ──────────────────────────────────
     # Bound counts — LLM never gets authority over spending ceiling
     MAX_CANDIDATES = 5
@@ -254,6 +269,15 @@ async def run_submission_loop(
                 log.warning(f"  Submit failed: {submission.get('error', '?')}")
         except Exception as e:
             log.warning(f"  Submit error: {e}")
+
+    # ── Step 6.5: Human gates ────────────────────────────────────────────
+    if opp.has_human_gates and result.submitted:
+        remaining_gates = [g for g in opp.human_gates if g.stage not in ("registration",)]
+        if remaining_gates:
+            log.info(f"  PAUSE: {len(remaining_gates)} human gate(s) remaining")
+            for gate in remaining_gates:
+                log.info(f"    → {gate.stage}: {gate.reason}")
+            run.external_status = "paused_human"
 
     # ── Step 7: Record ────────────────────────────────────────────────────
     run.completed_at = time.time()
