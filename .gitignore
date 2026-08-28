@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+.env
+data/credentials/
+data/config.json
+data/*.jsonl
+data/dashboard.json
+reference/
