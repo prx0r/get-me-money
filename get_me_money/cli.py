@@ -301,6 +301,44 @@ def workshop(list_workers: bool, list_blueprints: bool, worker: str):
 
 
 @main.command()
+@click.option("--list", "list_parts", is_flag=True, help="List parts")
+@click.option("--products", is_flag=True, help="List products")
+@click.option("--type", "part_type", default="", help="Filter by part type")
+def supply(list_parts: bool, products: bool, part_type: str):
+    """Supply chain — Parts, Builds, Products, Provenance."""
+    from get_me_money.supply_chain import SupplyChain
+    from pathlib import Path
+
+    sc = SupplyChain(Path("data/supply"))
+
+    if list_parts:
+        parts = sc.list_parts(type_filter=part_type)
+        click.echo(f"=== Parts ({len(parts)}) ===")
+        for p in parts[:20]:
+            click.echo(f"  {p.id[:20]:20} | {p.type:12} | ${p.price:.2f} | used:{p.downstream_uses} revenue:${p.downstream_revenue:.2f}")
+        return
+
+    if products:
+        prods_dir = sc.products_dir
+        files = list(prods_dir.glob("*.json"))
+        click.echo(f"=== Products ({len(files)}) ===")
+        for f in files[:20]:
+            data = json.loads(f.read_text())
+            click.echo(f"  {data.get('name', '?')[:40]:40} | score:{data.get('judge_score', 0):.2f} | ${data.get('revenue', 0):.2f}")
+        return
+
+    click.echo("=== Supply Chain ===")
+    parts = sc.list_parts()
+    prods = list(sc.products_dir.glob("*.json"))
+    click.echo(f"  Parts: {len(parts)}")
+    click.echo(f"  Products: {len(prods)}")
+    click.echo()
+    click.echo("  Commands:")
+    click.echo("    moltwork supply --list        List parts")
+    click.echo("    moltwork supply --products    List products")
+
+
+@main.command()
 @click.option("--execute", is_flag=True, help="Required for real submissions.")
 def daemon(execute: bool):
     """Run continuously on the VPS."""

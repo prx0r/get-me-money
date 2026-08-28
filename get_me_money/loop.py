@@ -134,6 +134,8 @@ async def run_submission_loop(
     judge_feedback = ""
 
     for round_num in range(max_rounds + 1):
+        candidate_dir = work_dir / f"candidate-{round_num}"
+        candidate_dir.mkdir(parents=True, exist_ok=True)
         log.info(f"[{run.task_title[:40]}] Step 3: Build v{round_num+1}...")
         t3 = time.time()
 
@@ -240,6 +242,45 @@ async def run_submission_loop(
     log.info(f"[{run.task_title[:40]}] Done ({elapsed:.0f}s): "
              f"submitted={result.submitted} candidates={len(run.candidates)} "
              f"selected=v{run.selected_candidate_version}")
+
+    # ── Step 8: Supply Chain — produce Parts + Products from this run ─────
+    if best_candidate and best_candidate.submittable:
+        try:
+            from get_me_money.supply_chain import SupplyChain
+            sc = SupplyChain(work_dir.parent.parent / "supply")
+            sc.from_submission_run({
+                "id": run.id if hasattr(run, "id") else f"run-{int(time.time())}",
+                "task_title": run.task_title,
+                "category": run.jobspec.get("deliverable_format", "mixed") if run.jobspec else "mixed",
+                "content": best_candidate.content,
+                "judge_score": best_candidate.judge_score,
+                "accepted": result.submitted,
+                "total_cost": run.total_cost,
+                "reward": run.task_reward,
+                "skills_used": run.jobspec.get("skills_required", []) if run.jobspec else [],
+            })
+            log.info(f"  Supply chain: product recorded")
+        except Exception as e:
+            log.warning(f"  Supply chain failed: {e}")
+
+    # ── Step 9: Oracle Observation — feed market intelligence ─────────────
+    if run.completed_at:
+        try:
+            from get_me_money.oracle_bridge import submit_to_oracle
+            await submit_to_oracle({
+                "id": f"run-{int(time.time())}",
+                "task_title": run.task_title,
+                "task_reward": run.task_reward,
+                "category": run.jobspec.get("deliverable_format", "mixed") if run.jobspec else "mixed",
+                "external_status": "submitted" if result.submitted else "failed",
+                "judge_score": best_candidate.judge_score if best_candidate else 0,
+                "total_cost": run.total_cost,
+                "strategy_version": "default-v1",
+                "skills_used": run.jobspec.get("skills_required", []) if run.jobspec else [],
+            })
+            log.info(f"  Oracle: observation submitted")
+        except Exception as e:
+            log.warning(f"  Oracle submission failed: {e}")
 
     return result
 
