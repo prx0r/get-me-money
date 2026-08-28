@@ -109,15 +109,6 @@ async def earn_cycle(config: Config, execute: bool = False) -> dict[str, Any]:
     remaining_daily = config.budget.daily_cap - daily
     remaining_lifetime = config.budget.lifetime_cap - lifetime
 
-    # Moltwork integration: import completed work as Products
-    moltwork = None
-    if config.platforms.moltwork_enabled and config.platforms.moltwork_url:
-        from get_me_money.platforms.moltwork import MoltworkAdapter
-        moltwork = MoltworkAdapter(
-            base_url=config.platforms.moltwork_url,
-            worker_id=config.platforms.moltwork_worker_id,
-        )
-
     for opp, ev in viable[:config.max_attempts_per_cycle]:
         if ev.estimated_cost > min(remaining_daily, remaining_lifetime, config.budget.per_attempt_cap):
             continue
@@ -126,12 +117,6 @@ async def earn_cycle(config: Config, execute: bool = False) -> dict[str, Any]:
         results.append({"attempt_id":a.id,"platform":a.platform.value,"title":a.title,"outcome":a.outcome.value,"cost":a.cost,"reward":a.reward,"net":a.net,"error":a.error})
         remaining_daily -= a.cost + a.fees; remaining_lifetime -= a.cost + a.fees
         await notify(config, f"get-me-money submitted/attempted: {a.title}\nplatform={a.platform.value} outcome={a.outcome.value} cost=${a.cost:.4f}")
-
-        # Post-job hook: import to Moltwork if work was done
-        if moltwork and a.outcome in (Outcome.SUCCEEDED, Outcome.REJECTED, Outcome.PENDING):
-            content = a.metadata.get("work_content", a.metadata.get("artifacts", [""])[0] if a.metadata.get("artifacts") else "")
-            if content:
-                moltwork.import_completed_work(a, result_content=str(content))
-
+    # WorkRun → Moltwork integration happens inside executor._create_workrun()
     pnl = save_pnl()
     return {"status": "ok", "scan": scan, "viable": len(viable), "results": results, "pnl": pnl}
