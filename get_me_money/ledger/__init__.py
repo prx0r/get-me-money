@@ -10,7 +10,7 @@ from typing import Iterator
 from get_me_money.config import (
     ATTEMPTS_DB, DATA_DIR, OPPORTUNITIES_DB, STRATEGIES_DB,
 )
-from get_me_money.models import Attempt, Opportunity, Outcome, Strategy
+from get_me_money.models import Attempt, Opportunity, Outcome, Platform, Strategy, TaskCategory
 
 
 def _append(path: Path, record: dict) -> None:
@@ -64,14 +64,14 @@ def load_opportunities() -> list[Opportunity]:
         seen.add(fp)
         opps.append(Opportunity(
             id=r["id"],
-            platform=r["platform"],
+            platform=Platform(r["platform"]),
             external_id=r.get("external_id", ""),
             title=r.get("title", ""),
             description=r.get("description", ""),
             url=r.get("url", ""),
             reward=r.get("reward", 0),
             currency=r.get("currency", "USD"),
-            category=r.get("category", "unknown"),
+            category=TaskCategory(r.get("category", "unknown")),
             tags=r.get("tags", []),
             posted_at=r.get("posted_at", 0),
             competition_estimate=r.get("competition_estimate", 0),
@@ -110,7 +110,7 @@ def load_attempts() -> list[Attempt]:
         Attempt(
             id=r["id"],
             opportunity_id=r.get("opportunity_id", ""),
-            platform=r["platform"],
+            platform=Platform(r["platform"]) if isinstance(r["platform"], str) else r["platform"],
             external_id=r.get("external_id", ""),
             title=r.get("title", ""),
             outcome=Outcome(r.get("outcome", "attempted")),

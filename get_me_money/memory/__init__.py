@@ -27,9 +27,8 @@ class Memory:
 
     def record(self, attempt: Attempt) -> None:
         self.attempts.append(attempt)
-        key = f"{attempt.platform.value}:{attempt.category if hasattr(attempt, 'category') else 'unknown'}"
 
-        # Try to get category from opportunity metadata
+        # Get category from opportunity metadata
         cat = attempt.metadata.get("category", "unknown") if hasattr(attempt, 'metadata') else "unknown"
         key = f"{cat}:{attempt.platform.value}"
 

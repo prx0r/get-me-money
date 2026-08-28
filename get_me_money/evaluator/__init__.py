@@ -56,7 +56,7 @@ class Evaluator:
 
         # Estimate cost
         hours = CATEGORY_HOURS.get(opp.category, 2.0)
-        token_cost = hours * 15_000 * COST_PER_1K_TOKENS  # ~15k tokens/hr of work
+        token_cost = hours * (15_000 / 1000) * COST_PER_1K_TOKENS  # ~15k tokens/hr of work
         api_cost = hours * 5 * COST_PER_HTTP_REQ           # ~5 API calls/hr
         fee_pct = PLATFORM_FEES.get(opp.platform, 0.10)
         fee = opp.reward * fee_pct

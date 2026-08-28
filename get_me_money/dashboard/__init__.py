@@ -34,7 +34,8 @@ def compute_pnl() -> PnLSnapshot:
         p = a.platform
         platform_totals[p] = platform_totals.get(p, 0) + a.net
     if platform_totals:
-        snap.best_platform = max(platform_totals, key=platform_totals.get)
+        best = max(platform_totals, key=platform_totals.get)
+        snap.best_platform = best.value if hasattr(best, 'value') else str(best)
 
     # Category breakdown
     cat_totals: dict[str, float] = {}
@@ -90,7 +91,7 @@ def save_pnl(snap: PnLSnapshot) -> None:
         "strategies": snap.strategies,
     }
     DASHBOARD_DB.parent.mkdir(parents=True, exist_ok=True)
-    DASHBOARD_DB.write_text(json.dumps(data, indent=2))
+    DASHBOARD_DB.write_text(json.dumps(data, indent=2, default=str))
 
 
 def get_dashboard_data() -> dict:

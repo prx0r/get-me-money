@@ -119,14 +119,25 @@ class TaskmarketAdapter(BaseAdapter):
             log.debug("Taskmarket scrape error: %s", e)
 
     def _to_opportunity(self, data: dict) -> Opportunity:
+        # Taskmarket rewards are in 6-decimal USDC units (1 USDC = 1e6 units)
+        # Prefer netReward (after platform fee) if available
         reward = 0.0
+        raw_reward = 0.0
         for key in ("reward", "amount", "payment", "usdc_amount", "value"):
             if key in data:
                 try:
-                    reward = float(data[key])
+                    raw_reward = float(data[key])
                     break
                 except (ValueError, TypeError):
                     pass
+
+        if "netReward" in data:
+            try:
+                reward = float(data["netReward"]) / 1_000_000
+            except (ValueError, TypeError):
+                pass
+        elif raw_reward:
+            reward = raw_reward / 1_000_000
 
         submission_count = 0
         for key in ("submissions", "submission_count", "entries"):
@@ -136,16 +147,27 @@ class TaskmarketAdapter(BaseAdapter):
                     break
                 except (ValueError, TypeError):
                     pass
+        if not submission_count and "submissionCount" in data:
+            try:
+                submission_count = int(data["submissionCount"])
+            except (ValueError, TypeError):
+                pass
+
+        # Title may be absent; extract first line from description
+        title = data.get("title", data.get("name", ""))
+        description = data.get("description", data.get("body", ""))
+        if not title and description:
+            title = description.split("\n")[0][:80]
 
         return Opportunity(
             platform=Platform.TASKMARKET,
             external_id=str(data.get("id", data.get("task_id", ""))),
-            title=data.get("title", data.get("name", "")),
-            description=data.get("description", data.get("body", "")),
+            title=title,
+            description=description,
             url=data.get("url", data.get("html_url", "")),
             reward=reward,
             currency="USDC",
-            category=_categorize(data.get("title", ""), data.get("description", "")),
+            category=_categorize(title, description),
             tags=data.get("tags", []),
             posted_at=data.get("created_at", data.get("posted_at", 0)),
             competition_estimate=submission_count,
