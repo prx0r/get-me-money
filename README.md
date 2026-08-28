@@ -1,131 +1,240 @@
 # Moltwork WorkerKit
 
-**From agent to paid worker in one click.**
+**From agent to paid worker. The work SDK for the agent economy.**
 
-WorkerKit is the SDK that turns any existing AI agent into a paid worker. It discovers opportunities across 60+ agent-earning platforms, evaluates expected value, executes work via Hermes, verifies output, submits to platforms, and records the full execution trace.
+WorkerKit gives agents the professional work loop: understand the task, plan the approach, do the work, judge quality, revise if needed, submit, and learn. The oracle provides market intelligence. The submission loop does the work. Together they form a worker that gets better with each job.
+
+## The Vision
+
+```
+Install WorkerKit
+    ↓
+Query the oracle (what work exists?)
+    ↓
+Find the best opportunity for YOUR capabilities
+    ↓
+Understand the task (JobSpec)
+    ↓
+Plan how to win (WinPlan)
+    ↓
+Do the work (Hermes)
+    ↓
+Judge quality (independent Hermes call)
+    ↓
+Revise if needed
+    ↓
+Submit
+    ↓
+Record everything (SubmissionRun)
+    ↓
+Learn from outcome
+    ↓
+Next job is better
+```
 
 ## Quick Start
 
 ```bash
 # Install
+git clone https://github.com/prx0r/get-me-money.git
+cd get-me-money
 pip install -e .
 
-# Scan for opportunities
+# Configure
+echo "OPENCODE_GO_API_KEY=sk-your-key" > data/.env
+
+# Test offline (no wallet needed)
+moltwork lab run examples/x402-products
+
+# Find work
 moltwork scan
 
-# Dry run (see ranked opportunities)
-moltwork run
-
-# Execute (actually do work and submit)
-moltwork run --execute
-
-# Check P&L
-moltwork dashboard
+# Do work
+moltwork work --title "Your task" --reward 5.0
 ```
+
+## For Moltbook Agents
+
+Read `worker.md` — it's the one-file onboarding document. Your agent reads it, installs WorkerKit, and starts working.
 
 ## Architecture
 
 ```
-FIND WORK → CHOOSE → WORK → VERIFY → SUBMIT → GET PAID → LEARN
+ORACLE                    SUBMISSION LOOP              LEARNING
+(what work exists)   →    (how to win it)         →    (what worked)
+                              
+Market intelligence       Task → JobSpec → WinPlan       SubmissionRun
+Opportunities             Build → Judge → Revise         Strategy memory
+Demand signals            Submit → Record                Postmortem
+Skill trends
 ```
 
-| Component | What it does |
-|---|---|
-| **Platforms** | Discover opportunities from Taskmarket, TryBounty, Superteam, MoltJobs |
-| **Evaluator** | Cash-EV scoring with beta-binomial probability calibration |
-| **Broker** | Capability acquisition, skill bundles, isolated Hermes environments |
-| **Executor** | 8-step lifecycle: claim → plan → execute → verify → submit |
-| **Hermes Runtime** | Spawns Hermes subprocess with isolated env and security boundary |
-| **Verifier** | Independent quality gate (blind to builder reasoning) |
-| **Ledger** | Append-only JSONL store with dedup and reconciliation |
-| **Memory** | Beta-binomial probability calibration from past outcomes |
+### The Oracle (market intelligence)
+
+The oracle provides:
+- What work exists across platforms
+- What it pays
+- Which skills are in demand
+- How competitive each market is
+- Trend analysis and demand signals
+
+```python
+from get_me_money.oracle_client import OracleClient
+
+oracle = OracleClient()
+opps = oracle.search(skills=["python", "research"], min_reward=10)
+trending = oracle.trending_skills()
+```
+
+### The Submission Loop (doing the work)
+
+Given a task, the loop produces the best possible submission:
+
+```python
+from get_me_money.loop import run_submission_loop
+from get_me_money.models import Opportunity, Evaluation
+
+result = await run_submission_loop(config, opp, ev, adapter, work_dir)
+```
+
+Steps:
+1. **JobSpec** — Hermes analyzes the task → structured requirements + scoring + rejection conditions
+2. **WinPlan** — Hermes decides enter/skip, differentiation strategy, candidate count
+3. **Build** — Hermes does the work with full context
+4. **Judge** — Separate Hermes call evaluates against the rubric
+5. **Revise** — If judge fails, feedback → rebuild → rejudge
+6. **Record** — SubmissionRun saved with all versions + judge reports
+
+### Learning (what worked)
+
+Each job produces a SubmissionRun:
+
+```yaml
+task: {title, reward, platform}
+jobspec: {objective, requirements, scoring, rejection}
+strategy: {differentiator, candidates, revisions}
+candidates:
+  - v1: {content, judge_score, failures}
+  - v2: {content, judge_score, failures}
+external: {status, score, rank, feedback}
+lessons: [what worked, what didn't]
+```
+
+Over time, strategy-memory.md is derived from completed runs.
+
+## Recipes
+
+Pre-built strategies in `recipes/`:
+
+```python
+from recipes.find_hot_skills import find_hot_skills
+from recipes.opportunity_router import route_opportunities
+from recipes.skill_gap import analyze_skill_gaps
+
+# What skills pay most?
+hot = find_hot_skills(min_reward=50)
+
+# What should I work on next?
+ranked = route_opportunities(skills=["solidity"], min_reward=100)
+
+# What skill am I missing?
+gaps = analyze_skill_gaps(agent_skills=["python", "web"])
+```
+
+Write your own recipes — the oracle + submission loop are your building blocks.
+
+## Exemplar Fixtures
+
+Test the loop offline with known tasks:
+
+```bash
+moltwork lab run examples/x402-products
+```
+
+Each fixture contains:
+- `task.md` — the original brief
+- `runs/` — SubmissionRun records
+- `bad/` — intentionally broken submissions (for testing the gate)
+
+Add your own fixtures for tasks you've completed. The more fixtures, the better the benchmark.
+
+## Core Primitives
+
+| Primitive | What it is | Why it matters |
+|---|---|---|
+| **JobSpec** | Structured task contract | Replaces brittle category matching with explicit requirements |
+| **WinPlan** | Competitive strategy | Decides whether to enter and how to differentiate |
+| **SubmissionRun** | Complete execution record | One primitive for all learning |
+| **DeterministicGate** | Hard requirement checks | No LLM needed — file counts, formats, placeholders |
+| **Judge** | Hermes quality evaluation | Independent from builder, sees only task + artifact |
+| **OracleClient** | Market intelligence bridge | Connects submission loop to market data |
 
 ## Config
 
-Config lives in `data/config.json`:
-
+`data/config.json`:
 ```json
 {
-  "budget": {
-    "daily_cap": 5.0,
-    "per_attempt_cap": 2.0,
-    "min_reward": 0.5,
-    "min_ev": 0.1
-  },
-  "hermes": {
-    "provider": "opencode-go",
-    "model": "mimo-v2.5",
-    "home": "/root/.hermes-gmm"
-  }
+  "budget": {"daily_cap": 5.0, "per_attempt_cap": 2.0, "min_reward": 0.5},
+  "hermes": {"provider": "opencode-go", "model": "mimo-v2.5"}
 }
 ```
 
-Credentials go in `data/.env`:
-
+`data/.env`:
 ```
 OPENCODE_GO_API_KEY=sk-...
-```
-
-## How It Works
-
-1. **Scan** — Query platform APIs for open tasks/bounties
-2. **Evaluate** — Score each opportunity: `P(success) × reward × (1 - fee) - cost`
-3. **Rank** — Sort by expected value, filter by budget gates
-4. **Claim** — Check eligibility on the platform
-5. **Build Profile** — Broker creates isolated Hermes workspace with required skills
-6. **Execute** — Hermes runs the task in one-shot mode with security boundary
-7. **Verify** — Independent quality check on deliverables
-8. **Submit** — Platform CLI/API submission
-9. **Record** — Save attempt to ledger with full metadata
-10. **Reconcile** — Check submission status, record outcome
-
-## Status
-
-**First external submission made:** Taskmarket survey ($1.50 USDC)
-- submissionId: `c434732c-7286-42a7-a660-a5cdb9362528`
-- Status: PENDING (awaiting owner review)
-
-**Pipeline status:**
-- Steps 1-5: Working
-- Step 6: Working (fixed: hermes content extraction)
-- Steps 7-10: Untested end-to-end
-
-## Development
-
-```bash
-# Run smoke tests
-python tests/smoke.py
-
-# Check doctor (preflight)
-moltwork doctor
 ```
 
 ## Project Structure
 
 ```
 get_me_money/
-├── cli.py              # Click CLI
-├── main.py             # Earn cycle orchestration
-├── config.py           # Configuration loading
-├── models.py           # Core data models
-├── evaluator/          # Cash-EV scoring
-├── executor/           # Execution lifecycle
-├── broker/             # Capability acquisition
-├── hermes_runtime.py   # Hermes subprocess
-├── verifier/           # Quality gate
-├── ledger/             # Append-only JSONL
-├── memory/             # Probability calibration
-├── platforms/          # Platform adapters
-│   ├── taskmarket.py   # Taskmarket CLI
-│   ├── bounty.py       # TryBounty API
-│   ├── superteam.py    # Superteam Earn API
-│   └── moltjobs.py     # MoltJobs API
-├── workrun.py          # Execution trace
-├── human_tasks.py      # Human escalation queue
-├── notifier.py         # Notifications
-├── dashboard/          # P&L + HTTP server
-└── daemon.py           # VPS daemon
+├── loop.py              Core submission loop
+├── lab.py               Offline testing
+├── jobspec.py           JobSpec + WinPlan
+├── submission_run.py    SubmissionRun primitive
+├── oracle_client.py     Oracle bridge
+├── hermes_runtime.py    Hermes execution
+├── verifier/            Gate + Judge
+├── executor/            Legacy pipeline
+├── evaluator/           EV scoring
+├── broker/              Capability acquisition
+├── ledger/              JSONL persistence
+├── memory/              Probability calibration
+├── platforms/           Platform adapters
+└── cli.py               CLI commands
+
+examples/
+└── x402-products/       Exemplar fixture
+
+recipes/
+├── find_hot_skills.py
+├── opportunity_router.py
+├── skill_gap.py
+└── platform_liquidity.py
+
+worker.md                One-click onboarding
+AGENTS.md                How agents use this
 ```
+
+## Development
+
+```bash
+# Lab mode (offline)
+moltwork lab run examples/x402-products
+
+# Tests
+python tests/smoke.py
+
+# Doctor
+moltwork doctor
+```
+
+## Status
+
+- First external submission: Taskmarket survey ($1.50 USDC, pending)
+- Core loop: JobSpec → WinPlan → Build → Judge → Revise working
+- Oracle bridge: connected to repute/oracle dataset
+- 4 starter recipes: hot skills, opportunity routing, skill gaps, liquidity
 
 ## License
 
