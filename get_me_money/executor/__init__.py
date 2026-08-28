@@ -5,6 +5,7 @@ import time
 from get_me_money.broker import CapabilityBroker, JobPlan
 from get_me_money.config import Config
 from get_me_money.executor.workers import run_task
+from get_me_money.hermes_runtime import HermesRunner
 from get_me_money.hermes_runtime import HermesError
 from get_me_money.models import Attempt, Evaluation, Opportunity, Outcome, Platform
 from get_me_money.platforms import BaseAdapter
@@ -46,8 +47,14 @@ class Executor:
             a.metadata["capabilities_acquiring"] = [ac.name for ac in plan.acquisitions]
             a.metadata["job_workspace"] = plan.workspace
 
-            # Step 3: Execute work via Hermes
-            result = await run_task(self.config, opp, ev)
+            # Step 3: Execute work via Hermes (with job profile for isolated skills)
+            job_profile = {
+                "hermes_home": plan.hermes_home,
+                "workspace": plan.workspace,
+                "skills_installed": plan.skills_installed,
+                "acquisitions": [ac.name for ac in plan.acquisitions],
+            }
+            result = await run_task(self.config, opp, ev, job_profile=job_profile)
             a.cost = float(result.get("cost", 0) or 0)
             a.metadata["workdir"] = result.get("workdir", "")
             a.metadata["usage"] = result.get("usage", {})

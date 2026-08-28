@@ -5,5 +5,6 @@ from get_me_money.hermes_runtime import HermesRunner
 from get_me_money.models import Evaluation, Opportunity
 
 
-async def run_task(config: Config, opp: Opportunity, ev: Evaluation) -> dict:
-    return await HermesRunner(config).run(opp, ev)
+async def run_task(config: Config, opp: Opportunity, ev: Evaluation,
+                   job_profile: dict | None = None) -> dict:
+    return await HermesRunner(config, job_profile=job_profile).run(opp, ev)

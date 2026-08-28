@@ -22,17 +22,30 @@ class HermesError(RuntimeError):
 
 
 class HermesRunner:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, job_profile: dict | None = None):
         self.config = config
+        self.job_profile = job_profile or {}
 
     async def run(self, opp: Opportunity, ev: Evaluation) -> dict[str, Any]:
         binary = shutil.which(self.config.hermes.binary) or self.config.hermes.binary
-        workdir = self.config.work_dir / f"{opp.platform.value}-{opp.id}"
+
+        # Use job-specific workspace and hermes_home if provided by broker
+        if self.job_profile.get("hermes_home"):
+            workdir = Path(self.job_profile["workspace"]) if self.job_profile.get("workspace") else self.config.work_dir / f"{opp.platform.value}-{opp.id}"
+        else:
+            workdir = self.config.work_dir / f"{opp.platform.value}-{opp.id}"
         workdir.mkdir(parents=True, exist_ok=True)
         usage_path = workdir / "hermes-usage.json"
         prompt_path = workdir / "TASK.md"
         primary = workdir / "SUBMISSION.md"
         prompt_path.write_text(self._prompt(opp, ev), encoding="utf-8")
+
+        # Use job-specific skills list in prompt if available
+        skills = self.job_profile.get("skills_installed", [])
+        if skills:
+            existing = prompt_path.read_text(encoding="utf-8")
+            skills_section = f"\n\nSKILLS INSTALLED FOR THIS JOB:\n" + "\n".join(f"- {s}" for s in skills) + "\n"
+            prompt_path.write_text(existing + skills_section, encoding="utf-8")
 
         # Use subprocess argv, never a shell. Marketplace text cannot become shell syntax.
         cmd = [binary, "-z", prompt_path.read_text(encoding="utf-8"), "--usage-file", str(usage_path)]
@@ -46,8 +59,10 @@ class HermesRunner:
             # Deliberately do NOT pass controller secrets (marketplace keys, wallet env, GitHub tokens)
             # into untrusted marketplace work. Provider auth should live in the isolated Hermes home.
             worker_env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "LC_ALL", "TZ") if k in os.environ}
-            if self.config.hermes.home:
-                worker_env["HERMES_HOME"] = self.config.hermes.home
+            # Use job-specific hermes_home if broker provided one
+            hermes_home = self.job_profile.get("hermes_home") or self.config.hermes.home
+            if hermes_home:
+                worker_env["HERMES_HOME"] = hermes_home
             # Pass through model provider keys (needed for Hermes to call LLM)
             for k in ("OPENCODE_GO_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
                        "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY",
