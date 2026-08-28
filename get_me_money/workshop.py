@@ -249,3 +249,83 @@ def list_blueprints(category: str = "") -> list[Blueprint]:
 
 def list_workers() -> list[Worker]:
     return list(WORKERS.values())
+
+
+async def fulfill(goal: str, budget: float = 10.0, config=None) -> dict:
+    """The Workshop decision engine.
+
+    Given a goal and budget, decide:
+      MAKE / BUY / HIRE / DELEGATE / COMPOSE
+
+    Returns the chosen option and its estimated economics.
+    """
+    from get_me_money.jobspec import JobSpec
+
+    # Analyze the goal
+    jobspec = JobSpec(
+        objective=goal,
+        hard_requirements=[goal],
+        scoring={"completeness": 0.5, "quality": 0.5},
+    )
+
+    options = []
+
+    # Option 1: MAKE internally
+    for bp in BLUEPRINTS.values():
+        if any(s in goal.lower() for s in bp.required_skills):
+            options.append({
+                "action": "MAKE",
+                "blueprint": bp.name,
+                "cost": bp.estimated_cost,
+                "quality": bp.historical_acceptance,
+                "confidence": 0.7,
+            })
+
+    # Option 2: BUY a Part
+    options.append({
+        "action": "BUY",
+        "description": "Purchase existing Part from marketplace",
+        "cost": 0.10,
+        "quality": 0.85,
+        "confidence": 0.8,
+    })
+
+    # Option 3: HIRE a worker
+    options.append({
+        "action": "HIRE",
+        "description": "Hire a specialist worker",
+        "cost": min(budget * 0.3, 5.0),
+        "quality": 0.80,
+        "confidence": 0.6,
+    })
+
+    # Option 4: DELEGATE as micro-bounty
+    options.append({
+        "action": "DELEGATE",
+        "description": "Post as competitive micro-bounty",
+        "cost": min(budget * 0.2, 3.0),
+        "quality": 0.85,
+        "confidence": 0.7,
+    })
+
+    # Option 5: COMPOSE from Parts
+    options.append({
+        "action": "COMPOSE",
+        "description": "Assemble from existing Parts + Recipe",
+        "cost": 0.19,
+        "quality": 0.91,
+        "confidence": 0.75,
+    })
+
+    # Rank by expected value: quality / cost
+    for o in options:
+        o["ev"] = o["quality"] / max(o["cost"], 0.01)
+
+    options.sort(key=lambda x: x["ev"], reverse=True)
+
+    return {
+        "goal": goal,
+        "budget": budget,
+        "options": options,
+        "recommended": options[0] if options else None,
+    }
