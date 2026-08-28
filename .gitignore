@@ -15,3 +15,4 @@ data/*.jsonl
 data/dashboard.json
 reference/
 data/work/jobs/
+data/work/

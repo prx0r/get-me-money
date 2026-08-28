@@ -99,6 +99,100 @@ def run(execute: bool):
 
 
 @main.command()
+@click.argument("task_id", required=False)
+@click.option("--title", default="", help="Task title (for manual testing)")
+@click.option("--reward", type=float, default=3.0, help="Task reward")
+def work(task_id: str, title: str, reward: float):
+    """Core submission loop: task → spec → plan → work → judge → submit."""
+    import logging as _log
+    _log.basicConfig(level=_log.INFO, format="%(asctime)s %(name)s: %(message)s")
+
+    from get_me_money.config import Config
+    from get_me_money.evaluator import Evaluator
+    from get_me_money.jobspec import JobSpec
+    from get_me_money.ledger import load_opportunities
+    from get_me_money.loop import run_submission_loop
+    from get_me_money.models import Evaluation, Opportunity, Platform
+    from get_me_money.platforms.taskmarket import TaskmarketAdapter
+
+    config = Config()
+    config.load()
+
+    if task_id:
+        opps = load_opportunities()
+        opp = next((o for o in opps if o.external_id == task_id), None)
+        if not opp:
+            click.echo(f"Task {task_id} not found in ledger")
+            return
+    elif title:
+        opp = Opportunity(
+            id="manual", platform=Platform.TASKMARKET, external_id="",
+            title=title, description=title, reward=reward, currency="USDC",
+        )
+    else:
+        click.echo("Provide a task_id or --title")
+        return
+
+    ev = Evaluator(config).evaluate(opp)
+    adapter = TaskmarketAdapter()
+    work_dir = config.work_dir / f"loop-{int(time.time())}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    click.echo(f"Task: {opp.title[:60]}")
+    click.echo(f"Reward: ${opp.reward:.2f} | EV: ${ev.ev_cash:.3f}")
+    click.echo(f"Working in: {work_dir}")
+    click.echo()
+
+    result = asyncio.run(run_submission_loop(config, opp, ev, adapter, work_dir))
+
+    click.echo()
+    click.echo("=== RESULT ===")
+    click.echo(f"Submitted: {result.submitted}")
+    click.echo(f"Candidates: {result.candidate_count}")
+    click.echo(f"Revisions: {result.revision_count}")
+    if result.attempt:
+        click.echo(f"Outcome: {result.attempt.outcome}")
+        click.echo(f"Cost: ${result.attempt.cost:.4f}")
+        click.echo(f"Error: {result.attempt.error or 'none'}")
+    if result.judge_reports:
+        for jr in result.judge_reports:
+            click.echo(f"Round {jr['round']}: gate={jr['gate_passed']} score={jr['score']:.2f} submittable={jr['submittable']}")
+            if jr['failures']:
+                for f in jr['failures']:
+                    click.echo(f"  FAIL: {f}")
+
+
+@main.command()
+@click.argument("fixture_dir")
+@click.option("--revisions", type=int, default=1, help="Max revision rounds")
+def lab(fixture_dir: str, revisions: int):
+    """Lab mode: offline submission testing with exemplar fixtures."""
+    import logging as _log
+    _log.basicConfig(level=_log.INFO, format="%(asctime)s %(name)s: %(message)s")
+
+    from get_me_money.config import Config
+    from get_me_money.lab import lab_run
+
+    config = Config()
+    config.load()
+    fixture = Path(fixture_dir)
+
+    if not fixture.exists():
+        click.echo(f"Fixture not found: {fixture_dir}")
+        return
+
+    click.echo(f"Lab run: {fixture}")
+    click.echo(f"Max revisions: {revisions}")
+    click.echo()
+
+    result = asyncio.run(lab_run(fixture, config, max_revisions=revisions))
+
+    click.echo()
+    click.echo("=== LAB RESULT ===")
+    click.echo(result.summary())
+
+
+@main.command()
 @click.option("--execute", is_flag=True, help="Required for real submissions.")
 def daemon(execute: bool):
     """Run continuously on the VPS."""

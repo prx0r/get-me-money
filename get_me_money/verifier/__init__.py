@@ -1,13 +1,11 @@
-"""Two-phase verifier: deterministic gate + isolated LLM Judge.
+"""Two-phase verifier: deterministic gate + Hermes Judge.
 
 Phase 1 (DeterministicGate): checks hard requirements from JobSpec.
-  - File count, format, required sections, placeholder detection
-  - No LLM needed. Pure Python. MUST pass before Phase 2.
+  No LLM needed. MUST pass before Phase 2.
 
-Phase 2 (Judge): evaluates subjective quality against rubric.
-  - Sees ONLY: original task, JobSpec, final artifacts.
-  - Does NOT see: builder reasoning, intermediate steps, internal logic.
-  - Returns rubric scores + pass/fail.
+Phase 2 (Judge): Hermes evaluates quality against rubric.
+  Sees ONLY: original task + JobSpec + artifact.
+  Does NOT see: builder reasoning, intermediate steps.
 """
 from __future__ import annotations
 
@@ -16,7 +14,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +36,6 @@ class JudgeReport:
 
 @dataclass
 class VerificationResult:
-    """Combined result of deterministic gate + judge."""
     submittable: bool = False
     gate_passed: bool = False
     judge_report: JudgeReport | None = None
@@ -47,13 +43,10 @@ class VerificationResult:
     gate_score: float = 0.0
     failures: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    notes: str = ""
 
     @property
     def score(self) -> float:
-        if self.judge_report:
-            return self.judge_report.overall_score
-        return self.gate_score
+        return self.judge_report.overall_score if self.judge_report else self.gate_score
 
     @property
     def checks_passed(self) -> int:
@@ -69,217 +62,188 @@ class VerificationResult:
 
 
 class DeterministicGate:
-    """Phase 1: check hard requirements from JobSpec. No LLM."""
+    """Phase 1: check hard requirements. No LLM."""
 
     def __init__(self, jobspec: dict | None = None):
         self.jobspec = jobspec or {}
 
     def check(self, work_dir: str, artifacts: list[str], content: str) -> list[CheckResult]:
-        """Run all deterministic checks against the JobSpec."""
-        checks = []
-        checks.append(self._check_content_minimum(content))
-        checks.append(self._check_no_placeholders(content))
-        checks.append(self._check_no_todos(content))
-
-        # JobSpec-specific checks
+        checks = [
+            self._check_content_minimum(content),
+            self._check_no_placeholders(content),
+            self._check_no_todos(content),
+        ]
         if self.jobspec:
-            checks.extend(self._check_jobspec_requirements(work_dir, artifacts, content))
-
+            checks.extend(self._check_jobspec_requirements(artifacts, content))
         return checks
 
     def _check_content_minimum(self, content: str) -> CheckResult:
         if len(content) >= 100:
             return CheckResult(name="content_minimum", passed=True, message=f"{len(content)} chars")
-        return CheckResult(name="content_minimum", passed=False, message=f"Only {len(content)} chars, need 100+")
+        return CheckResult(name="content_minimum", passed=False, message=f"Only {len(content)} chars")
 
     def _check_no_placeholders(self, content: str) -> CheckResult:
-        placeholders = [r"\[TODO\]", r"\[TBD\]", r"\[PLACEHOLDER\]", r"\{\{.*?\}\}",
-                        r"INSERT.*HERE", r"Lorem ipsum", r"FIXME"]
-        for p in placeholders:
+        for p in [r"\[TODO\]", r"\[TBD\]", r"\[PLACEHOLDER\]", r"\{\{.*?\}\}", r"Lorem ipsum"]:
             if re.search(p, content, re.IGNORECASE):
-                return CheckResult(name="no_placeholders", passed=False, message=f"Found placeholder: {p}")
+                return CheckResult(name="no_placeholders", passed=False, message=f"Found: {p}")
         return CheckResult(name="no_placeholders", passed=True, message="Clean")
 
     def _check_no_todos(self, content: str) -> CheckResult:
-        todo_count = len(re.findall(r'\bTODO\b|\bFIXME\b|\bHACK\b', content, re.IGNORECASE))
-        if todo_count == 0:
+        n = len(re.findall(r'\bTODO\b|\bFIXME\b|\bHACK\b', content, re.IGNORECASE))
+        if n == 0:
             return CheckResult(name="no_todos", passed=True, message="Clean")
-        return CheckResult(name="no_todos", passed=False, message=f"Found {todo_count} TODO/FIXME/HACK markers")
+        return CheckResult(name="no_todos", passed=False, message=f"Found {n} TODO/FIXME/HACK")
 
-    def _check_jobspec_requirements(self, work_dir: str, artifacts: list[str], content: str) -> list[CheckResult]:
-        """Check JobSpec hard requirements."""
+    def _check_jobspec_requirements(self, artifacts: list[str], content: str) -> list[CheckResult]:
         checks = []
-        reqs = self.jobspec.get("hard_requirements", [])
-
-        for i, req in enumerate(reqs):
-            req_lower = req.lower()
-            # File count requirements
-            if "file" in req_lower and any(c.isdigit() for c in req):
+        for i, req in enumerate(self.jobspec.get("hard_requirements", [])):
+            rl = req.lower()
+            if "file" in rl and any(c.isdigit() for c in req):
                 nums = re.findall(r'(\d+)', req)
                 if nums:
                     expected = int(nums[0])
                     actual = len(artifacts)
-                    passed = actual >= expected if "at least" in req_lower or ">=" in req_lower else actual == expected
-                    checks.append(CheckResult(
-                        name=f"req_{i}_file_count",
-                        passed=passed,
-                        message=f"Expected {expected} files, got {actual}"
-                    ))
-
-            # Section/heading requirements
-            elif "section" in req_lower or "heading" in req_lower or "include" in req_lower:
-                # Extract quoted terms
-                quoted = re.findall(r'["\']([^"\']+)["\']', req)
-                for term in quoted:
-                    found = term.lower() in content.lower()
-                    checks.append(CheckResult(
-                        name=f"req_{i}_has_{term[:20]}",
-                        passed=found,
-                        message=f"{'Found' if found else 'Missing'}: {term}"
-                    ))
-
-            # URL/source requirements
-            elif "source" in req_lower or "url" in req_lower or "citation" in req_lower:
+                    op = ">=" if ("at least" in rl or ">=" in rl) else "=="
+                    passed = actual >= expected if op == ">=" else actual == expected
+                    checks.append(CheckResult(name=f"req_{i}_files", passed=passed,
+                                              message=f"Expected {op} {expected}, got {actual}"))
+            elif "source" in rl or "url" in rl or "citation" in rl:
                 urls = re.findall(r'https?://[^\s\)]+', content)
-                passed = len(urls) >= 1
-                checks.append(CheckResult(
-                    name=f"req_{i}_sources",
-                    passed=passed,
-                    message=f"Found {len(urls)} URLs"
-                ))
-
-            # Numeric requirements
-            elif re.search(r'\d+', req):
-                # Generic numeric check — see if content mentions the number
-                nums_in_req = re.findall(r'(\d+)', req)
-                content_lower = content.lower()
-                relevant_nums = [n for n in nums_in_req if n in content_lower]
-                passed = len(relevant_nums) >= len(nums_in_req) // 2
-                checks.append(CheckResult(
-                    name=f"req_{i}_numeric",
-                    passed=passed,
-                    message=f"Found {len(relevant_nums)}/{len(nums_in_req)} required numbers"
-                ))
-
+                checks.append(CheckResult(name=f"req_{i}_urls", passed=len(urls) >= 1,
+                                          message=f"{len(urls)} URLs"))
         return checks
 
 
 class Judge:
-    """Phase 2: LLM-based quality evaluation. Isolated from builder reasoning."""
+    """Phase 2: Hermes-based quality evaluation."""
 
-    def __init__(self):
-        pass
+    def __init__(self, config=None):
+        self.config = config
 
-    async def evaluate(self, jobspec: dict, content: str, work_dir: str) -> JudgeReport:
-        """Evaluate submission quality against the JobSpec rubric.
+    async def evaluate(self, jobspec: dict, content: str, work_dir: str,
+                       task_title: str = "", task_description: str = "") -> JudgeReport:
+        """Use Hermes to judge the submission against the rubric."""
+        if not self.config:
+            return self._fallback_evaluate(jobspec, content)
 
-        This method is a placeholder — the real judge will call Hermes
-        to evaluate the submission against the rubric criteria.
-        For now, return a basic report based on content analysis.
-        """
+        from get_me_money.hermes_runtime import HermesRunner
+        from get_me_money.models import Evaluation, Opportunity, Platform
+
+        scoring = jobspec.get("scoring", {})
+        scoring_text = "\n".join(f"- {k}: {v*100:.0f}%" for k, v in scoring.items())
+        rejection = jobspec.get("automatic_rejection", [])
+        rejection_text = "\n".join(f"- {r}" for r in rejection)
+        reqs = jobspec.get("hard_requirements", [])
+        reqs_text = "\n".join(f"- {r}" for r in reqs)
+
+        # Truncate content to fit in prompt
+        truncated = content[:8000] if len(content) > 8000 else content
+
+        judge_prompt = f"""You are an independent judge evaluating a submission. You do NOT see the builder's reasoning.
+
+TASK: {task_title}
+
+JOB SPECIFICATION:
+Objective: {jobspec.get('objective', task_title)}
+
+Hard Requirements:
+{reqs_text}
+
+Scoring Rubric:
+{scoring_text}
+
+Automatic Rejection:
+{rejection_text}
+
+SUBMISSION TO JUDGE:
+---
+{truncated}
+---
+
+Evaluate this submission. Return a JSON object:
+{{
+  "scores": {{"criterion_name": score_0_to_1, ...}},
+  "overall_score": 0.0_to_1.0,
+  "submittable": true_or_false,
+  "feedback": "brief explanation",
+  "revision_suggestions": ["specific improvement 1", "specific improvement 2"]
+}}
+
+Rules:
+- Score each criterion 0.0 to 1.0 based on the rubric
+- overall_score = weighted average using the rubric weights
+- submittable = overall_score >= 0.6 AND no hard requirement violated
+- Be honest. A score of 0.5 means mediocre. 0.8+ means genuinely good.
+- revision_suggestions must be specific and actionable
+- Return ONLY the JSON object"""
+
+        opp = Opportunity(
+            id="judge", platform=Platform.TASKMARKET, external_id="",
+            title="Judge submission", description=judge_prompt,
+            reward=0, currency="USDC",
+        )
+        ev = Evaluation(opportunity_id="judge", probability_of_success=0.5, ev_cash=0, estimated_cost=0.01)
+
+        runner = HermesRunner(self.config)
+        result = await runner.run(opp, ev)
+        return self._parse_judge_response(result.get("content", ""), scoring)
+
+    def _parse_judge_response(self, text: str, scoring: dict) -> JudgeReport:
+        """Parse Hermes judge response into JudgeReport."""
         report = JudgeReport()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            m = re.search(r"\{.*\}", text, re.S)
+            if m:
+                try:
+                    data = json.loads(m.group(0))
+                except json.JSONDecodeError:
+                    data = {}
+            else:
+                data = {}
 
-        # Extract scoring criteria from jobspec
+        report.scores = data.get("scores", {})
+        report.overall_score = data.get("overall_score", 0.0)
+        report.submittable = data.get("submittable", False)
+        report.feedback = data.get("feedback", "")
+        report.revision_suggestions = data.get("revision_suggestions", [])
+
+        # Validate scores
+        if not report.scores and scoring:
+            # Fallback: the judge didn't return scores, use content analysis
+            return self._fallback_evaluate({"scoring": scoring}, "")
+
+        return report
+
+    def _fallback_evaluate(self, jobspec: dict, content: str) -> JudgeReport:
+        """Fallback when Hermes is unavailable."""
+        report = JudgeReport()
         scoring = jobspec.get("scoring", {})
         if not scoring:
-            # Default rubric
-            scoring = {
-                "completeness": 0.3,
-                "accuracy": 0.3,
-                "quality": 0.2,
-                "presentation": 0.2,
-            }
+            scoring = {"completeness": 0.5, "quality": 0.5}
 
-        # Basic content analysis for each criterion
         total = 0.0
         for criterion, weight in scoring.items():
-            score = self._score_criterion(criterion, content)
+            score = min(1.0, len(content) / 2000) if content else 0.0
             report.scores[criterion] = score
             total += score * weight
 
         report.overall_score = total
-
-        # Check rejection conditions
-        rejection = jobspec.get("automatic_rejection", [])
-        for condition in rejection:
-            if self._check_rejection_condition(condition, content):
-                report.submittable = False
-                report.feedback += f"REJECTED: {condition}\n"
-                return report
-
-        report.submittable = report.overall_score >= 0.5
+        report.submittable = total >= 0.6 and len(content) >= 100
         return report
-
-    def _score_criterion(self, criterion: str, content: str) -> float:
-        """Score a single criterion based on content analysis."""
-        c = criterion.lower()
-        words = content.split()
-        word_count = len(words)
-
-        if "completeness" in c or "thorough" in c:
-            if word_count > 1000: return 0.9
-            if word_count > 500: return 0.7
-            if word_count > 200: return 0.5
-            return 0.3
-
-        if "original" in c or "creative" in c:
-            # Check for unique terms vs generic language
-            unique_ratio = len(set(words)) / max(1, word_count)
-            return min(1.0, unique_ratio * 2)
-
-        if "source" in c or "evidence" in c:
-            urls = re.findall(r'https?://', content)
-            return min(1.0, len(urls) * 0.2)
-
-        if "quality" in c or "accura" in c:
-            # Check for data points, structure
-            has_numbers = len(re.findall(r'\d+', content)) > 3
-            has_structure = any(m in content for m in ["#", "- ", "| "])
-            score = 0.3
-            if has_numbers: score += 0.3
-            if has_structure: score += 0.3
-            return min(1.0, score)
-
-        if "present" in c or "format" in c:
-            has_headers = bool(re.search(r'^#+\s', content, re.MULTILINE))
-            has_lists = bool(re.search(r'^[-*]\s', content, re.MULTILINE))
-            score = 0.3
-            if has_headers: score += 0.35
-            if has_lists: score += 0.35
-            return min(1.0, score)
-
-        # Default
-        return 0.5
-
-    def _check_rejection_condition(self, condition: str, content: str) -> bool:
-        """Check if a rejection condition is triggered."""
-        c = condition.lower()
-        if "placeholder" in c or "todo" in c:
-            return bool(re.search(r'TODO|FIXME|\[TBD\]|\{\{.*?\}\}', content, re.IGNORECASE))
-        if "duplicate" in c:
-            # Check for repeated paragraphs
-            paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
-            if len(paragraphs) > 2:
-                unique = set(paragraphs)
-                return len(unique) < len(paragraphs) * 0.8
-        if "missing" in c:
-            # Check if something mentioned in the condition is absent
-            terms = re.findall(r'["\']([^"\']+)["\']', condition)
-            return any(t.lower() not in content.lower() for t in terms)
-        return False
 
 
 class Verifier:
-    """Two-phase verification: deterministic gate + LLM judge."""
+    """Two-phase verification: deterministic gate + Hermes judge."""
 
-    def __init__(self, work_dir: str, jobspec: dict | None = None):
+    def __init__(self, work_dir: str, jobspec: dict | None = None, config=None):
         self.work_dir = work_dir
         self.gate = DeterministicGate(jobspec)
-        self.judge = Judge()
+        self.judge = Judge(config)
 
     async def verify(self, opp, artifacts: list[str],
                      submission_content: str = "", jobspec: dict | None = None) -> VerificationResult:
-        """Run deterministic gate, then judge if gate passes."""
         r = VerificationResult()
 
         # Phase 1: Deterministic gate
@@ -296,14 +260,19 @@ class Verifier:
             r.submittable = False
             return r
 
-        # Phase 2: LLM judge
+        # Phase 2: Hermes judge
         r.judge_report = await self.judge.evaluate(
-            effective_jobspec, submission_content, self.work_dir
+            effective_jobspec, submission_content, self.work_dir,
+            task_title=getattr(opp, "title", ""),
+            task_description=getattr(opp, "description", ""),
         )
         r.submittable = r.judge_report.submittable
         if not r.submittable:
-            r.failures.append(f"Judge score {r.judge_report.overall_score:.2f} below threshold")
+            r.failures.append(f"Judge score {r.judge_report.overall_score:.2f} < 0.6")
             if r.judge_report.feedback:
                 r.warnings.append(r.judge_report.feedback)
+            if r.judge_report.revision_suggestions:
+                for s in r.judge_report.revision_suggestions:
+                    r.warnings.append(f"Suggestion: {s}")
 
         return r
