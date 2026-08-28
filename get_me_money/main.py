@@ -13,6 +13,7 @@ from get_me_money.models import Opportunity, Outcome, Platform
 from get_me_money.notifier import notify
 from get_me_money.platforms import BaseAdapter
 from get_me_money.platforms.bounty import BountyAdapter
+from get_me_money.platforms.moltjobs import MoltJobsAdapter
 from get_me_money.platforms.taskmarket import TaskmarketAdapter
 from get_me_money.platforms.superteam import SuperteamAdapter
 
@@ -27,6 +28,8 @@ def get_adapters(config: Config) -> dict[Platform, BaseAdapter]:
         out[Platform.TASKMARKET] = TaskmarketAdapter()
     if config.platforms.superteam_enabled and config.platforms.superteam_key:
         out[Platform.SUPERTEAM] = SuperteamAdapter(config.platforms.superteam_key, config.platforms.superteam_telegram)
+    if config.platforms.moltjobs_enabled:
+        out[Platform.MOLTJOBS] = MoltJobsAdapter(api_key=config.platforms.moltjobs_api_key)
     return out
 
 

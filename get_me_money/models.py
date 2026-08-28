@@ -16,12 +16,12 @@ class Platform(str, Enum):
     CLUSTLY = "clustly"
     SUPERTEAM = "superteam"
     TASKMARKET = "taskmarket"
+    MOLTJOBS = "moltjobs"
     AGENTHANSA = "agenthansa"
     OLAS = "olas"
     VIRTUALS = "virtuals"
     X402 = "x402"
     GIGS = "gigs"
-    MOLTJOBS = "moltjobs"
     SPOREAGENT = "sporeagent"
     CUSTOM = "custom"
 

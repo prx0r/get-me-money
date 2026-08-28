@@ -32,6 +32,7 @@ class PlatformConfig:
     bounty_enabled: bool = True
     taskmarket_enabled: bool = True
     superteam_enabled: bool = True  # discovery; auto-submit is conservative
+    moltjobs_enabled: bool = True
     gigs_enabled: bool = True
     algora_enabled: bool = False
     opire_enabled: bool = False
@@ -40,11 +41,13 @@ class PlatformConfig:
     bounty_api_key: str = ""
     superteam_key: str = ""
     superteam_telegram: str = ""
+    moltjobs_api_key: str = ""
 
     def load_env(self) -> None:
         self.bounty_api_key = os.getenv("BOUNTY_API_KEY", self.bounty_api_key)
         self.superteam_key = os.getenv("SUPERTEAM_KEY", self.superteam_key)
         self.superteam_telegram = os.getenv("SUPERTEAM_TELEGRAM", self.superteam_telegram)
+        self.moltjobs_api_key = os.getenv("MOLTJOBS_API_KEY", self.moltjobs_api_key)
 
 
 @dataclass
