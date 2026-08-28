@@ -129,49 +129,48 @@ async def run_submission_loop(
         return result
 
     # ── Step 3-5: Build + Judge + Revise ──────────────────────────────────
-    max_rounds = min(winplan.revision_rounds, max_revisions)
+    num_candidates = max(1, winplan.candidate_count)
+    max_revisions = max(0, winplan.revision_rounds - 1)
     best_candidate = None
     judge_feedback = ""
 
-    for round_num in range(max_rounds + 1):
-        candidate_dir = work_dir / f"candidate-{round_num}"
+    # Phase A: Build N independent candidates
+    log.info(f"  Building {num_candidates} candidate(s)...")
+    for ci in range(num_candidates):
+        candidate_dir = work_dir / f"candidate-{ci}"
         candidate_dir.mkdir(parents=True, exist_ok=True)
-        log.info(f"[{run.task_title[:40]}] Step 3: Build v{round_num+1}...")
         t3 = time.time()
 
-        # Build
-        candidate = CandidateRecord(version=round_num + 1)
+        candidate = CandidateRecord(version=ci + 1)
         try:
+            suffix = f"\n\nVARIATION {ci+1}/{num_candidates}: Produce a distinctly different approach."
             build_result = await asyncio.wait_for(
-                _build_candidate(config, opp, jobspec, winplan, candidate_dir, judge_feedback),
-                timeout=HERMES_TIMEOUT * 2,  # builds take longer
+                _build_candidate(config, opp, jobspec, winplan, candidate_dir,
+                                "", suffix if ci > 0 else ""),
+                timeout=HERMES_TIMEOUT * 2,
             )
             candidate.content = build_result.get("content", "")
             candidate.artifact_paths = build_result.get("artifacts", [])
             candidate.compute_hash()
-            cost = float(build_result.get("cost", 0) or 0)
-            log.info(f"  Build done ({time.time()-t3:.0f}s): {len(candidate.content)} chars, "
-                     f"hash={candidate.content_hash}, cost=${cost:.4f}")
+            log.info(f"  Candidate v{ci+1} ({time.time()-t3:.0f}s): "
+                     f"{len(candidate.content)} chars")
         except asyncio.TimeoutError:
-            log.warning(f"  Build v{round_num+1} timed out")
-            run.candidates.append(candidate)
-            continue
+            log.warning(f"  Candidate v{ci+1} timed out")
         except HermesError as e:
-            log.error(f"  Build v{round_num+1} failed: {e}")
-            candidate.failures.append(str(e))
-            run.candidates.append(candidate)
-            continue
+            log.error(f"  Candidate v{ci+1} failed: {e}")
 
         if not candidate.content or len(candidate.content) < 50:
-            log.warning(f"  Build v{round_num+1}: no usable content")
             candidate.failures.append("No usable content produced")
-            run.candidates.append(candidate)
-            continue
+        run.candidates.append(candidate)
 
-        # Judge
-        log.info(f"[{run.task_title[:40]}] Step 4: Judge v{round_num+1}...")
+    # Phase B: Blind judge all candidates
+    log.info(f"  Judging {len(run.candidates)} candidate(s)...")
+    for candidate in run.candidates:
+        if not candidate.content or len(candidate.content) < 50:
+            continue
         t4 = time.time()
-        judge_result = await _judge_candidate(config, opp, jobspec, candidate.content, candidate.artifact_paths, str(work_dir))
+        jdir = str(work_dir / f"candidate-{candidate.version - 1}")
+        judge_result = await _judge_candidate(config, opp, jobspec, candidate.content, candidate.artifact_paths, jdir)
         candidate.gate_passed = judge_result.gate_passed
         candidate.judge_score = judge_result.score
         candidate.submittable = judge_result.submittable
@@ -181,20 +180,58 @@ async def run_submission_loop(
             (judge_result.judge_report.revision_suggestions if judge_result.judge_report else []) +
             judge_result.failures
         )
-        log.info(f"  Judge done ({time.time()-t4:.0f}s): gate={judge_result.gate_passed} "
+        log.info(f"  v{candidate.version}: gate={judge_result.gate_passed} "
                  f"score={judge_result.score:.2f} submittable={judge_result.submittable}")
 
-        run.candidates.append(candidate)
+    # Phase C: Select best by judge score
+    scored = [c for c in run.candidates if c.judge_score > 0]
+    if scored:
+        best_candidate = max(scored, key=lambda c: c.judge_score)
+        run.selected_candidate_version = best_candidate.version
+        log.info(f"  Selected v{best_candidate.version} (score={best_candidate.judge_score:.2f})")
 
-        if judge_result.submittable:
-            best_candidate = candidate
-            run.selected_candidate_version = candidate.version
-            log.info(f"  APPROVED v{candidate.version}")
-            break
+        # Phase D: Revise best if not submittable
+        if not best_candidate.submittable and max_revisions > 0:
+            judge_feedback = best_candidate.revision_feedback
+            for rev in range(max_revisions):
+                rev_dir = work_dir / f"revision-{rev}"
+                rev_dir.mkdir(parents=True, exist_ok=True)
+                log.info(f"  Revising (round {rev+1})...")
 
-        # Prepare revision
-        judge_feedback = candidate.revision_feedback
-        best_candidate = candidate  # keep best
+                rev_c = CandidateRecord(version=len(run.candidates) + 1)
+                try:
+                    br = await asyncio.wait_for(
+                        _build_candidate(config, opp, jobspec, winplan, rev_dir, judge_feedback),
+                        timeout=HERMES_TIMEOUT * 2,
+                    )
+                    rev_c.content = br.get("content", "")
+                    rev_c.artifact_paths = br.get("artifacts", [])
+                    rev_c.compute_hash()
+                except Exception as e:
+                    log.warning(f"  Revision failed: {e}")
+                    continue
+
+                if not rev_c.content or len(rev_c.content) < 50:
+                    continue
+
+                jr = await _judge_candidate(config, opp, jobspec, rev_c.content, rev_c.artifact_paths, str(rev_dir))
+                rev_c.gate_passed = jr.gate_passed
+                rev_c.judge_score = jr.score
+                rev_c.submittable = jr.submittable
+                rev_c.failures = jr.failures
+                rev_c.revision_feedback = "; ".join(
+                    (jr.judge_report.revision_suggestions if jr.judge_report else []) + jr.failures
+                )
+                run.candidates.append(rev_c)
+                log.info(f"  Revision v{rev_c.version}: score={jr.score:.2f}")
+
+                if jr.submittable or jr.score > best_candidate.judge_score:
+                    best_candidate = rev_c
+                    run.selected_candidate_version = rev_c.version
+                    if jr.submittable:
+                        log.info(f"  Revision approved v{rev_c.version}")
+                        break
+                judge_feedback = rev_c.revision_feedback
 
     # ── Step 6: Submit ────────────────────────────────────────────────────
     if best_candidate and best_candidate.submittable and adapter and not skip_submit:
@@ -361,7 +398,7 @@ Produce ONLY a JSON object:
 
 async def _build_candidate(
     config: Config, opp: Opportunity, jobspec: JobSpec, winplan: WinPlan,
-    work_dir: Path, revision_feedback: str = "",
+    work_dir: Path, revision_feedback: str = "", suffix: str = "",
 ) -> dict:
     approach = f"""
 APPROACH THIS TASK WITH:
@@ -392,7 +429,7 @@ PREVIOUS VERSION WAS REJECTED. FIX THESE ISSUES:
 {approach}
 --- END ---
 
-DO THE ACTUAL WORK. Write deliverables to files. Write final submission to SUBMISSION.md."""
+DO THE ACTUAL WORK. Write deliverables to files. Write final submission to SUBMISSION.md.{suffix}"""
 
     opp_enriched = Opportunity(
         id=opp.id, platform=opp.platform, external_id=opp.external_id,
