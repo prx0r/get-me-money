@@ -132,8 +132,8 @@ async def run_submission_loop(
 
     # ── Step 2.5: Check execution_mode ──────────────────────────────────
     from get_me_money.models import ExecutionMode
-    if opp.execution_mode == ExecutionMode.HUMAN_GATED:
-        log.info(f"  HUMAN_GATED — agent produces, human handles gates")
+    if opp.execution_mode == ExecutionMode.HUMAN_INVOLVED:
+        log.info(f"  HUMAN_INVOLVED — agent produces, human handles gates")
         if opp.has_human_gates:
             log.info(f"    Gates: {', '.join(g.stage for g in opp.human_gates)}")
 

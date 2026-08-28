@@ -70,9 +70,9 @@ class OpportunityType(str, Enum):
 
 
 class ExecutionMode(int, Enum):
-    """How does it get to market?"""
-    AUTONOMOUS = 0       # agent does everything
-    HUMAN_GATED = 1      # agent produces, human handles 1-2 specific gates
+    """Does this require human involvement?"""
+    AGENT_ONLY = 0      # agent does everything end-to-end
+    HUMAN_INVOLVED = 1  # human must do something (account, KYC, publish, register)
 
 
 class RewardModel(str, Enum):
@@ -108,7 +108,7 @@ class Opportunity:
     category: TaskCategory = TaskCategory.UNKNOWN
 
     # How can it be executed?
-    execution_mode: ExecutionMode = ExecutionMode.AUTONOMOUS
+    execution_mode: ExecutionMode = ExecutionMode.AGENT_ONLY
     human_gates: list[HumanGate] = field(default_factory=list)
 
     # What's the reward structure?
@@ -148,7 +148,7 @@ class Opportunity:
 
     @property
     def is_autonomous(self) -> bool:
-        return self.execution_mode == ExecutionMode.AUTONOMOUS
+        return self.execution_mode == ExecutionMode.AGENT_ONLY
 
     @property
     def has_human_gates(self) -> bool:
