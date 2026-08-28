@@ -203,8 +203,8 @@ def decompose(task_title: str, reward: float, max_parts: int, min_reward: float)
     _log.basicConfig(level=_log.INFO, format="%(asctime)s %(name)s: %(message)s")
 
     from get_me_money.config import Config
-from get_me_money.employer import decompose_task, format_micro_bounty_post
-from get_me_money.models import Evaluation, Opportunity, Platform
+    from get_me_money.employer import decompose_task, format_micro_bounty_post
+    from get_me_money.models import Evaluation, Opportunity, Platform
 
     config = Config()
     config.load()
