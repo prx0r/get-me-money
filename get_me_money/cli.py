@@ -339,6 +339,35 @@ def supply(list_parts: bool, products: bool, part_type: str):
 
 
 @main.command()
+@click.argument("goal")
+@click.option("--budget", type=float, default=10.0, help="Budget for the task")
+def fulfill(goal: str, budget: float):
+    """Fulfill a goal — Workshop decides MAKE/BUY/HIRE/DELEGATE/COMPOSE."""
+    import asyncio
+    import logging as _log
+    _log.basicConfig(level=_log.INFO, format="%(asctime)s %(name)s: %(message)s")
+
+    from get_me_money.workshop import fulfill as do_fulfill
+
+    result = asyncio.run(do_fulfill(goal, budget))
+
+    click.echo(f"Goal: {result['goal'][:60]}")
+    click.echo(f"Budget: ${result['budget']:.2f}")
+    click.echo()
+    click.echo("Options:")
+    for o in result["options"]:
+        marker = "→" if o == result["recommended"] else " "
+        click.echo(f"  {marker} {o['action']:10} cost=${o['cost']:.2f} quality={o['quality']:.2f} ev={o['ev']:.2f}")
+        if "blueprint" in o:
+            click.echo(f"    blueprint: {o['blueprint']}")
+        if "description" in o:
+            click.echo(f"    {o['description']}")
+    click.echo()
+    if result["recommended"]:
+        click.echo(f"Recommended: {result['recommended']['action']}")
+
+
+@main.command()
 @click.option("--execute", is_flag=True, help="Required for real submissions.")
 def daemon(execute: bool):
     """Run continuously on the VPS."""

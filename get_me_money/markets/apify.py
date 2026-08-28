@@ -1,8 +1,4 @@
-"""Apify Store adapter — search, create, publish Actors.
-
-Full API: https://docs.apify.com/api/v2/store
-Actor management: https://docs.apify.com/api/v2/actors
-"""
+"""Apify Store adapter — search, create, publish Actors."""
 from __future__ import annotations
 
 import json
@@ -29,26 +25,28 @@ class ApifyAdapter(MarketAdapter):
         return h
 
     async def search(self, query="", category="", limit=20) -> list[MarketListing]:
-        url = f"{self.base}/store?sortBy=popularity&limit={limit}"
+        url = f"{self.base}/store?limit={limit}"
         if query:
             url += f"&search={query}"
         try:
             req = urllib.request.Request(url, headers=self._headers())
             with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
+                raw = json.loads(resp.read())
+                items = raw.get("data", {}).get("items", [])
                 return [MarketListing(
                     market="apify",
-                    listing_id=a.get("id", ""),
-                    title=a.get("name", ""),
+                    listing_id=a.get("username", "") + "/" + a.get("name", ""),
+                    title=a.get("title", ""),
                     price=0,
                     stats={
-                        "runs": a.get("totalRuns", 0),
-                        "users": a.get("totalUsers", 0),
-                        "users_7d": a.get("totalUsers7Days", 0),
+                        "runs": a.get("stats", {}).get("totalRuns", 0),
+                        "users": a.get("stats", {}).get("totalUsers", 0),
+                        "users_7d": a.get("stats", {}).get("totalUsers7D", 0),
                         "category": a.get("category", ""),
                     }
-                ) for a in data.get("data", [])[:limit]]
-        except Exception:
+                ) for a in items[:limit]]
+        except Exception as e:
+            print(f"Apify search error: {e}")
             return []
 
     async def get_stats(self, listing_id) -> dict:
@@ -56,14 +54,14 @@ class ApifyAdapter(MarketAdapter):
             url = f"{self.base}/store/{listing_id}"
             req = urllib.request.Request(url, headers=self._headers())
             with urllib.request.urlopen(req, timeout=10) as resp:
-                return json.loads(resp.read()).get("data", {})
+                raw = json.loads(resp.read())
+                return raw.get("data", {})
         except Exception:
             return {}
 
     async def create_draft(self, title, description, price=0, **kwargs) -> MarketListing:
         if not self.api_token:
             raise ValueError("API token required to create Actors")
-        # Create Actor via API
         data = json.dumps({
             "name": title.lower().replace(" ", "-"),
             "description": description,
@@ -80,7 +78,7 @@ class ApifyAdapter(MarketAdapter):
             actor = result.get("data", {})
             return MarketListing(
                 market="apify",
-                listing_id=actor.get("id", ""),
+                listing_id=actor.get("username", "") + "/" + actor.get("name", ""),
                 title=actor.get("name", ""),
                 url=f"https://apify.com/{actor.get('username', '')}/{actor.get('name', '')}",
             )
