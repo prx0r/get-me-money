@@ -99,12 +99,53 @@ class Executor:
             status = await adapter.check_status(opp)
             self.apply_status(a, status)
 
+            # Step 8: Create WorkRun → Moltwork (Product + Receipt + Capability)
+            if self.config.platforms.moltwork_enabled:
+                self._create_workrun(a, opp, ev, plan, result)
+
         except HermesError as e:
             a.metadata["usage"] = e.usage
             a.finalize(Outcome.FAILED, cost=max(a.cost, e.cost), error=str(e))
         except Exception as e:
             a.finalize(Outcome.FAILED, cost=a.cost, error=f"{type(e).__name__}: {e}")
         return a
+
+    def _create_workrun(self, a: Attempt, opp: Opportunity, ev: Evaluation,
+                        plan: 'JobPlan', result: dict) -> None:
+        """Create WorkRun and send to Moltwork."""
+        import httpx
+        from get_me_money.workrun import WorkRun
+
+        run = WorkRun(
+            job_title=opp.title,
+            job_description=opp.description[:500],
+            job_platform=opp.platform.value,
+            job_external_id=opp.external_id,
+            job_reward=opp.reward,
+            agent_id=self.config.platforms.moltwork_worker_id,
+            category=opp.category.value,
+            tags=opp.tags + a.metadata.get("skills_used", []),
+            artifact_content=result.get("content", ""),
+            artifact_files=result.get("artifacts", []),
+            verification_score=a.metadata.get("verification", {}).get("score", 0),
+            verification_passed=a.metadata.get("verification", {}).get("submittable", False),
+            tokens_in=a.metadata.get("usage", {}).get("input_tokens", 0),
+            tokens_out=a.metadata.get("usage", {}).get("output_tokens", 0),
+            total_cost=a.cost,
+            duration_seconds=a.duration_seconds,
+            submitted=bool(a.submission_url),
+            submission_url=a.submission_url,
+            outcome=a.outcome.value,
+            reward_earned=a.reward,
+            skills_activated=a.metadata.get("skills_used", []),
+        )
+
+        try:
+            url = self.config.platforms.moltwork_url
+            r = httpx.post(f"{url}/api/workruns", json=run.to_dict(), timeout=15)
+            r.json()
+        except Exception:
+            pass  # non-critical, don't fail the attempt
 
     @staticmethod
     def apply_status(a: Attempt, status: dict) -> Attempt:
