@@ -231,6 +231,37 @@ from get_me_money.models import Evaluation, Opportunity, Platform
 
 
 @main.command()
+@click.argument("title")
+@click.option("--reward", type=float, required=True, help="Payment amount")
+@click.option("--description", default="", help="Job description")
+@click.option("--skills", default="", help="Required skills (comma-separated)")
+def hire(title: str, reward: float, description: str, skills: str):
+    """Hire a worker — create a canonical job."""
+    from get_me_money.job import CanonicalJob, JobStatus
+    from get_me_money.recipes.hire_worker import create_hire_job, estimate_job_cost
+
+    desc = description or title
+    skill_list = [s.strip() for s in skills.split(",") if s.strip()] if skills else []
+    job = create_hire_job(title=title, description=desc, reward=reward, skills=skill_list)
+
+    click.echo(f"Job: {job.id}")
+    click.echo(f"Title: {job.title}")
+    click.echo(f"Reward: ${job.reward:.2f}")
+    click.echo(f"Spec hash: {job.spec_hash()}")
+    click.echo(f"Status: {job.status.value}")
+
+    cost = estimate_job_cost(job)
+    click.echo(f"Estimated cost: ${cost['estimated_total_cost']:.2f}")
+    click.echo(f"Estimated net: ${cost['estimated_net']:.2f}")
+
+    # Save job
+    from pathlib import Path
+    job_dir = Path("data/jobs") / job.id.replace(":", "-")
+    job.save(job_dir)
+    click.echo(f"Saved: {job_dir}")
+
+
+@main.command()
 @click.option("--execute", is_flag=True, help="Required for real submissions.")
 def daemon(execute: bool):
     """Run continuously on the VPS."""
