@@ -14,3 +14,4 @@ data/config.json
 data/*.jsonl
 data/dashboard.json
 reference/
+data/work/jobs/
