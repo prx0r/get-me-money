@@ -84,21 +84,23 @@ async def run_submission_loop(
     # ── Step 1: Generate JobSpec ──────────────────────────────────────────
     log.info(f"[{run.task_title[:40]}] Step 1: JobSpec...")
     t1 = time.time()
+    jobspec = _fallback_jobspec(opp)  # start with fallback
     try:
-        jobspec = await asyncio.wait_for(
+        candidate_spec = await asyncio.wait_for(
             _generate_jobspec(config, opp), timeout=HERMES_TIMEOUT
         )
-        run.jobspec = jobspec.to_dict()
-        log.info(f"  JobSpec done ({time.time()-t1:.0f}s): {len(jobspec.hard_requirements)} reqs, "
-                 f"{len(jobspec.automatic_rejection)} rejection conditions")
-    except asyncio.TimeoutError:
-        log.warning("  JobSpec timed out, using fallback")
-        jobspec = _fallback_jobspec(opp)
-        run.jobspec = jobspec.to_dict()
-    except Exception as e:
+        # Validate — reject empty/invalid specs
+        if (candidate_spec.objective and
+            candidate_spec.hard_requirements and
+            candidate_spec.scoring and
+            sum(candidate_spec.scoring.values()) > 0.5):
+            jobspec = candidate_spec
+            log.info(f"  JobSpec done ({time.time()-t1:.0f}s): {len(jobspec.hard_requirements)} reqs")
+        else:
+            log.warning(f"  JobSpec invalid, using fallback")
+    except (asyncio.TimeoutError, Exception) as e:
         log.warning(f"  JobSpec failed: {e}, using fallback")
-        jobspec = _fallback_jobspec(opp)
-        run.jobspec = jobspec.to_dict()
+    run.jobspec = jobspec.to_dict()
 
     # ── Step 2: Generate WinPlan ──────────────────────────────────────────
     log.info(f"[{run.task_title[:40]}] Step 2: WinPlan...")
@@ -129,8 +131,11 @@ async def run_submission_loop(
         return result
 
     # ── Step 3-5: Build + Judge + Revise ──────────────────────────────────
-    num_candidates = max(1, winplan.candidate_count)
-    max_revisions = max(0, winplan.revision_rounds - 1)
+    # Bound counts — LLM never gets authority over spending ceiling
+    MAX_CANDIDATES = 5
+    MAX_REVISIONS = 3
+    num_candidates = max(1, min(winplan.candidate_count, MAX_CANDIDATES))
+    max_revisions = max(0, min(winplan.revision_rounds - 1, MAX_REVISIONS))
     best_candidate = None
     judge_feedback = ""
 
@@ -291,7 +296,7 @@ async def run_submission_loop(
                 "category": run.jobspec.get("deliverable_format", "mixed") if run.jobspec else "mixed",
                 "content": best_candidate.content,
                 "judge_score": best_candidate.judge_score,
-                "accepted": result.submitted,
+                "accepted": False,  # never assume accepted — only external outcome can confirm
                 "total_cost": run.total_cost,
                 "reward": run.task_reward,
                 "skills_used": run.jobspec.get("skills_required", []) if run.jobspec else [],
