@@ -47,12 +47,13 @@ class HermesRunner:
             skills_section = f"\n\nSKILLS INSTALLED FOR THIS JOB:\n" + "\n".join(f"- {s}" for s in skills) + "\n"
             prompt_path.write_text(existing + skills_section, encoding="utf-8")
 
-        # Use subprocess argv, never a shell. Marketplace text cannot become shell syntax.
-        cmd = [binary, "-z", prompt_path.read_text(encoding="utf-8"), "--usage-file", str(usage_path)]
-        if self.config.hermes.provider:
-            cmd += ["--provider", self.config.hermes.provider]
-        if self.config.hermes.model:
-            cmd += ["--model", self.config.hermes.model]
+        # Use hermes chat -q (non-interactive with tool support) instead of -z (no tools).
+        # Marketplace text cannot become shell syntax — use subprocess argv, never a shell.
+        cmd = [binary, "chat", "-q", prompt_path.read_text(encoding="utf-8"),
+               "--yolo", "--provider", self.config.hermes.provider or "opencode-go",
+               "--model", self.config.hermes.model or "mimo-v2.5"]
+        if self.config.hermes.max_turns:
+            cmd += ["--max-turns", str(self.config.hermes.max_turns)]
 
         started = time.time()
         try:
@@ -96,15 +97,19 @@ class HermesRunner:
         if proc.returncode != 0 or usage.get("failed") is True:
             raise HermesError(f"Hermes failed rc={proc.returncode}: {(err or out)[-1500:]}", measured_cost, usage)
 
-        # Parse response: extract JSON metadata and submission content
+        # Parse response: extract JSON metadata
         final_meta = self._extract_json(out)
-        content = self._extract_content(out)
 
-        # Write SUBMISSION.md from hermes response (hermes -z has no file tools)
-        if content and len(content) >= 50:
-            primary.write_text(content, encoding="utf-8")
-        elif not primary.exists() or primary.stat().st_size < 50:
-            raise HermesError("Hermes returned without usable submission content", measured_cost, usage)
+        # Prefer SUBMISSION.md created by hermes chat (with tool support).
+        # Fall back to extracting content from response text (for -z mode).
+        if primary.exists() and primary.stat().st_size >= 50:
+            pass  # hermes chat created the file — use it
+        else:
+            content = self._extract_content(out)
+            if content and len(content) >= 50:
+                primary.write_text(content, encoding="utf-8")
+            else:
+                raise HermesError("Hermes returned without usable submission content", measured_cost, usage)
         artifacts = [primary]
         for candidate in final_meta.get("artifacts", []) if isinstance(final_meta, dict) else []:
             p = (workdir / str(candidate)).resolve()
@@ -142,12 +147,9 @@ QUALITY BAR:
 2. Research/implement the actual task; do not merely describe what you would do.
 3. Verify factual claims and run relevant tests/checks.
 4. Critique your own draft against every acceptance criterion and improve it.
-5. Write your complete submission as your response text below.
-6. Your final response MUST contain the full deliverable content.
-7. Your final response MUST end with exactly this JSON on its own line:
-   {{"completed":true,"artifacts":["SUBMISSION.md"],"url":"","pr_url":"","submission":{{}}}}
-
-IMPORTANT: You do NOT have file system access. Return your submission content as text in your response. The controller will write it to SUBMISSION.md.
+5. Write the final submission to `SUBMISSION.md` in the current working directory.
+6. Put any additional deliverables in this directory too.
+7. Your final response MUST be a JSON object: {{"completed":true,"artifacts":["SUBMISSION.md"],"url":"","pr_url":"","submission":{{}}}}
 
 OPPORTUNITY METADATA:
 platform={opp.platform.value}
