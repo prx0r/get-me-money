@@ -85,49 +85,36 @@ class OracleClient:
     async def search(self, skills: list[str] | None = None, min_reward: float = 0,
                source: str | None = None, category: str | None = None,
                limit: int = 50) -> list[OracleOpportunity]:
-        """Search across all sources: local DB + live adapters."""
-        results = []
-
-        # Source 1: Local oracle DB
-        db = self._get_db()
-        if db:
-            results.extend(self._search_db(db, skills, min_reward, source, category, limit))
-
-        # Source 2: Apify (live)
-        apify = self._get_apify()
-        if apify:
-            try:
-                apify_results = await self._search_apify(apify, skills, limit)
-                results.extend(apify_results)
-            except Exception as e:
-                log.warning(f"Apify search failed: {e}")
-
-        # Deduplicate by title
-        seen = set()
-        unique = []
-        for r in results:
-            key = r.title.lower().strip()
-            if key not in seen:
-                seen.add(key)
-                unique.append(r)
-
-        return unique[:limit]
+        """Search WORK FEED — opportunities to earn money."""
+        return await self._search(skills, min_reward, source, category, limit,
+                                  sources=["taskmarket", "algora", "bountybook", "superteam"])
 
     def search_sync(self, skills: list[str] | None = None, min_reward: float = 0,
                source: str | None = None, category: str | None = None,
                limit: int = 50) -> list[OracleOpportunity]:
-        """Synchronous search — queries DB + Apify."""
-        results = []
-        db = self._get_db()
-        if db:
-            results.extend(self._search_db(db, skills, min_reward, source, category, limit))
+        """Synchronous WORK FEED search."""
+        return self._search_sync(skills, min_reward, source, category, limit,
+                                 sources=["taskmarket", "algora", "bountybook", "superteam"])
 
-        # Apify sync search
+    async def search_tools(self, query: str = "", limit: int = 20) -> list[OracleOpportunity]:
+        """Search TOOL FEED — Apify actors, MCPs, APIs to use."""
+        results = []
+        apify = self._get_apify()
+        if apify:
+            try:
+                apify_results = await self._search_apify(apify, [], limit)
+                results.extend(apify_results)
+            except Exception as e:
+                log.warning(f"Apify search failed: {e}")
+        return results[:limit]
+
+    def search_tools_sync(self, query: str = "", limit: int = 20) -> list[OracleOpportunity]:
+        """Synchronous TOOL FEED search."""
+        results = []
         try:
             from get_me_money.markets.apify import ApifyAdapter
             import urllib.parse, urllib.request
             apify = ApifyAdapter()
-            query = " ".join(skills) if skills else ""
             url = f"{apify.base}/store?limit={min(limit, 20)}"
             if query:
                 url += f"&search={urllib.parse.quote(query)}"
@@ -138,27 +125,29 @@ class OracleClient:
                 for a in items:
                     results.append(OracleOpportunity(
                         id=f"apify:{a.get('username','')}/{a.get('name','')}",
-                        source="apify",
-                        source_id=a.get("name", ""),
-                        title=a.get("title", ""),
-                        reward_usd=0,
-                        category=a.get("category", "tool"),
-                        skills=skills or [],
-                        status="active",
+                        source="apify", source_id=a.get("name", ""),
+                        title=a.get("title", ""), reward_usd=0,
+                        category="tool", skills=[], status="active",
                         url=f"https://apify.com/{a.get('username','')}/{a.get('name','')}",
                         raw=a.get("stats", {}),
                     ))
-        except Exception as e:
-            log.warning(f"Apify sync search failed: {e}")
+        except Exception:
+            pass
+        return results[:limit]
 
-        seen = set()
-        unique = []
-        for r in results:
-            key = r.title.lower().strip()
-            if key not in seen:
-                seen.add(key)
-                unique.append(r)
-        return unique[:limit]
+    async def _search(self, skills, min_reward, source, category, limit, sources=None):
+        results = []
+        db = self._get_db()
+        if db:
+            results.extend(self._search_db(db, skills, min_reward, source, category, limit))
+        return self._dedup(results)[:limit]
+
+    def _search_sync(self, skills, min_reward, source, category, limit, sources=None):
+        results = []
+        db = self._get_db()
+        if db:
+            results.extend(self._search_db(db, skills, min_reward, source, category, limit))
+        return self._dedup(results)[:limit]
 
     async def _search_apify(self, apify, skills, limit) -> list[OracleOpportunity]:
         """Search Apify Store for tools."""
@@ -167,18 +156,26 @@ class OracleClient:
         return [
             OracleOpportunity(
                 id=f"apify:{r.listing_id}",
-                source="apify",
-                source_id=r.listing_id,
-                title=r.title,
-                reward_usd=0,  # usage-based, not fixed price
+                source="apify", source_id=r.listing_id,
+                title=r.title, reward_usd=0,
                 category=r.stats.get("category", "tool"),
-                skills=skills or [],
-                status="active",
+                skills=skills or [], status="active",
                 url=f"https://apify.com/{r.listing_id}",
                 raw=r.stats,
             )
             for r in results
         ]
+
+    @staticmethod
+    def _dedup(results):
+        seen = set()
+        unique = []
+        for r in results:
+            key = r.title.lower().strip()
+            if key not in seen:
+                seen.add(key)
+                unique.append(r)
+        return unique
 
     def _search_db(self, db, skills, min_reward, source, category, limit):
         query = "SELECT * FROM opportunities WHERE 1=1"
