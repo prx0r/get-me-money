@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 import click
 
@@ -124,6 +125,45 @@ def doctor():
         click.echo(f"{'OK  ' if ok else 'FAIL'} {name:28s} {detail}")
     if any(not ok for _,ok,_ in rows):
         raise SystemExit(1)
+
+
+@main.command("human-tasks")
+@click.option("--list", "list_tasks", is_flag=True, help="List pending human tasks")
+@click.option("--add", "add_title", help="Add a new human task")
+@click.option("--description", default="", help="Task description")
+@click.option("--complete", "complete_id", help="Mark task as completed")
+def human_tasks_cmd(list_tasks: bool, add_title: str, description: str, complete_id: str):
+    """Manage human task queue — actions the agent needs you to do."""
+    from get_me_money.human_tasks import get_pending, get_all, create_task, complete_task
+
+    if add_title:
+        task = create_task(add_title, description)
+        click.echo(json.dumps(task, indent=2))
+        return
+
+    if complete_id:
+        task = complete_task(complete_id)
+        if task:
+            click.echo(f"Completed: {task['title']}")
+        else:
+            click.echo("Task not found")
+        return
+
+    # Default: list pending
+    tasks = get_pending()
+    if not tasks:
+        click.echo("No pending human tasks.")
+        return
+
+    click.echo(f"\n  PENDING HUMAN TASKS ({len(tasks)}):\n")
+    for t in tasks:
+        age = time.time() - t.get("created_at", 0)
+        age_str = f"{age/3600:.1f}h" if age > 3600 else f"{age/60:.0f}m"
+        click.echo(f"  [{t['id']}] {t['title']}")
+        click.echo(f"    type: {t.get('type', 'action')}  priority: {t.get('priority', 'normal')}  age: {age_str}")
+        if t.get("description"):
+            click.echo(f"    {t['description'][:100]}")
+        click.echo()
 
 
 if __name__ == "__main__": main()

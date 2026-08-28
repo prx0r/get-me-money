@@ -1,0 +1,13 @@
+{
+  "name": "gmm-human-tasks",
+  "version": "1.0.0",
+  "description": "Human task queue for get-me-money agent",
+  "main": "worker.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0"
+  }
+}

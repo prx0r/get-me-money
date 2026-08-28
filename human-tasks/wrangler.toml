@@ -1,0 +1,10 @@
+name = "gmm-human-tasks"
+main = "worker.js"
+compatibility_date = "2026-08-28"
+
+[env]
+vars = { SECRET = "changeme" }
+
+[[kv_namespaces]]
+binding = "TASKS"
+id = "placeholder-create-with-wrangler"
