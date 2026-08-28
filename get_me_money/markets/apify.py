@@ -25,9 +25,10 @@ class ApifyAdapter(MarketAdapter):
         return h
 
     async def search(self, query="", category="", limit=20) -> list[MarketListing]:
+        import urllib.parse
         url = f"{self.base}/store?limit={limit}"
         if query:
-            url += f"&search={query}"
+            url += f"&search={urllib.parse.quote(query)}"
         try:
             req = urllib.request.Request(url, headers=self._headers())
             with urllib.request.urlopen(req, timeout=10) as resp:
