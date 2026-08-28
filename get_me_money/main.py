@@ -15,14 +15,23 @@ from get_me_money.loop import run_submission_loop
 from get_me_money.models import Attempt, Evaluation, Opportunity, Outcome, Platform
 from get_me_money.platforms import BaseAdapter
 from get_me_money.platforms.taskmarket import TaskmarketAdapter
+from get_me_money.platforms.superteam import SuperteamAdapter
+from get_me_money.platforms.moltjobs import MoltJobsAdapter
 
 log = logging.getLogger(__name__)
 
 
 def get_adapter(config: Config, platform: Platform) -> BaseAdapter | None:
     """Get the adapter for a platform."""
-    if platform == Platform.TASKMARKET:
-        return TaskmarketAdapter()
+    adapters = {
+        Platform.TASKMARKET: TaskmarketAdapter,
+        Platform.SUPERTEAM: lambda: SuperteamAdapter(config.platforms.superteam_key, config.platforms.superteam_telegram) if config.platforms.superteam_key else None,
+        Platform.MOLTJOBS: lambda: MoltJobsAdapter(config.platforms.moltjobs_api_key) if config.platforms.moltjobs_api_key else None,
+    }
+    factory = adapters.get(platform)
+    if factory:
+        result = factory()
+        return result if result else None
     return None
 
 

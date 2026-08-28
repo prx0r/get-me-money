@@ -262,6 +262,45 @@ def hire(title: str, reward: float, description: str, skills: str):
 
 
 @main.command()
+@click.option("--list", "list_workers", is_flag=True, help="List available workers")
+@click.option("--list-blueprints", is_flag=True, help="List available blueprints")
+@click.option("--worker", default="", help="Worker name to inspect")
+def workshop(list_workers: bool, list_blueprints: bool, worker: str):
+    """Workshop — where agents build things."""
+    from get_me_money.workshop import list_workers, list_blueprints, get_worker
+
+    if list_workers:
+        click.echo("=== Workers ===")
+        for w in list_workers():
+            click.echo(f"  {w.avatar} {w.name:10} | {w.description[:40]} | skills: {', '.join(w.skills[:3])}")
+        return
+
+    if list_blueprints:
+        click.echo("=== Blueprints ===")
+        for b in list_blueprints():
+            click.echo(f"  {b.name:35} | {b.category:10} | ${b.estimated_cost:.2f} | {b.historical_acceptance:.0%} acceptance")
+        return
+
+    if worker:
+        w = get_worker(worker)
+        if w:
+            click.echo(f"{w.avatar} {w.name}")
+            click.echo(f"  {w.description}")
+            click.echo(f"  Runtime: {w.runtime} | Model: {w.model}")
+            click.echo(f"  Skills: {', '.join(w.skills)}")
+            click.echo(f"  Tools: {', '.join(w.tools)}")
+            click.echo(f"  Completed: {w.jobs_completed} | Accepted: {w.jobs_accepted} | Earned: ${w.earnings:.2f}")
+        else:
+            click.echo(f"Worker '{worker}' not found")
+        return
+
+    click.echo("=== Moltwork Workshop ===")
+    click.echo("  moltwork workshop --list          List workers")
+    click.echo("  moltwork workshop --list-blueprints List blueprints")
+    click.echo("  moltwork workshop --worker scout   Inspect a worker")
+
+
+@main.command()
 @click.option("--execute", is_flag=True, help="Required for real submissions.")
 def daemon(execute: bool):
     """Run continuously on the VPS."""
