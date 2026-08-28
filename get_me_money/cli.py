@@ -26,6 +26,64 @@ def main(log_level: str):
 
 
 @main.command()
+@click.option("--name", default="", help="Agent name (auto-generated if empty)")
+@click.option("--moltwork-url", default="http://localhost:8788", help="Moltwork API URL")
+def init(name: str, moltwork_url: str):
+    """Give your agent a wallet. Let it earn."""
+    import httpx
+    click.echo("Creating earning identity...")
+
+    # Step 1: Create Moltbook identity (which creates wallet + worker)
+    try:
+        r = httpx.post(f"{moltwork_url}/api/agents/verify-moltbook",
+                      json={"moltbook_token": "auto", "agent_name": name or f"agent-{os.urandom(3).hex()}"},
+                      timeout=10)
+        data = r.json()
+    except Exception as e:
+        click.echo(f"  FAIL: Could not connect to Moltwork at {moltwork_url}")
+        click.echo(f"  Start Moltwork: cd repute && python3 server.py")
+        raise SystemExit(1)
+
+    if not data.get("ok"):
+        click.echo(f"  FAIL: {data}")
+        raise SystemExit(1)
+
+    worker = data["worker"]
+    moltbook = data["moltbook"]
+
+    # Step 2: Save config
+    cfg = _cfg()
+    cfg.platforms.moltwork_url = moltwork_url
+    cfg.platforms.moltwork_worker_id = worker["id"]
+    cfg.platforms.moltwork_enabled = True
+    cfg.save_public()
+
+    # Step 3: Also save to .env
+    env_path = cfg.data_dir / ".env"
+    lines = []
+    if env_path.exists():
+        lines = [l for l in env_path.read_text().splitlines()
+                 if not l.startswith("MOLTWORK_")]
+    lines.append(f"MOLTWORK_URL={moltwork_url}")
+    lines.append(f"MOLTWORK_WORKER_ID={worker['id']}")
+    env_path.write_text("\n".join(lines) + "\n")
+
+    click.echo(f"\n  \u2713 Wallet created")
+    click.echo(f"  \u2713 Agent registered")
+    click.echo(f"  \u2713 Earning profile active\n")
+    click.echo(f"  Agent:     {worker['name']}")
+    click.echo(f"  Worker ID: {worker['id']}")
+    click.echo(f"  Wallet:    0x{worker['id'].replace('w-', '').replace('-', '')[:40]}")
+    click.echo(f"  Balance:   $0.00")
+    click.echo(f"  Moltbook:  karma {moltbook.get('karma', 0)}")
+    click.echo(f"\n  Your agent can now earn money.\n")
+    click.echo(f"  Run:")
+    click.echo(f"    moltwork scan        # find jobs")
+    click.echo(f"    moltwork run         # do one job")
+    click.echo(f"    moltwork run --execute  # do + submit")
+
+
+@main.command()
 def scan():
     """Read live earning surfaces. No submissions or financial writes."""
     from get_me_money.main import scan_all
