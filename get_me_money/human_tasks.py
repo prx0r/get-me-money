@@ -1,7 +1,7 @@
-"""Human task queue — local filesystem adapter + Cloudflare Worker bridge.
+"""Human task queue — first-class subsystem for human-agent collaboration.
 
-The agent writes tasks here when it needs human action.
-The human sees them on the Cloudflare Worker dashboard and ticks them off.
+Agent autonomous by default; human only handles irreversible, identity-bound,
+legal, high-risk, or ambiguous actions.
 """
 from __future__ import annotations
 
@@ -14,6 +14,25 @@ from get_me_money.config import DATA_DIR
 
 
 HUMAN_TASKS_FILE = DATA_DIR / "human-tasks.jsonl"
+
+# Task types
+AUTH = "auth"              # OAuth / API key / account connection
+IDENTITY = "identity"      # KYC / age / identity verification
+LEGAL = "legal"            # Terms acceptance / contract / policy change
+APPROVAL = "approval"      # Agent wants permission for significant action
+PAYMENT = "payment"        # Funding / payout / withdrawal
+SECRET = "secret"          # API credential required
+AMBIGUITY = "ambiguity"    # Agent genuinely cannot infer user intent
+SECURITY = "security"      # Suspicious skill/tool/site needs review
+EXCEPTION = "exception"    # Agent got stuck after automated recovery
+
+TASK_TYPES = {AUTH, IDENTITY, LEGAL, APPROVAL, PAYMENT, SECRET, AMBIGUITY, SECURITY, EXCEPTION}
+
+# Priority levels
+URGENT = "urgent"
+HIGH = "high"
+NORMAL = "normal"
+LOW = "low"
 
 
 def _load() -> list[dict]:
@@ -43,10 +62,21 @@ def _append(task: dict) -> None:
         f.write(json.dumps(task, default=str) + "\n")
 
 
-def create_task(title: str, description: str = "", task_type: str = "action",
-                priority: str = "normal", agent_id: str = "",
+def _ev_priority(estimated_value: float, urgency: str, effort_seconds: float) -> float:
+    """Compute EV-based priority score. Higher = more important."""
+    urgency_mult = {"urgent": 4.0, "high": 2.0, "normal": 1.0, "low": 0.5}.get(urgency, 1.0)
+    effort_minutes = max(0.5, effort_seconds / 60.0)
+    return (estimated_value * urgency_mult) / effort_minutes
+
+
+def create_task(title: str, description: str = "", task_type: str = APPROVAL,
+                priority: str = NORMAL, agent_id: str = "",
+                estimated_value: float = 0.0, effort_seconds: float = 60,
+                deadline: str = "", job_id: str = "",
+                agent_progress: list[str] | None = None,
+                requested_action: str = "", resume_event: str = "",
                 metadata: dict[str, Any] | None = None) -> dict:
-    """Create a human task. The agent calls this when it needs human action."""
+    """Create a human task with full metadata."""
     import random
     task = {
         "id": random.randbytes(4).hex(),
@@ -60,6 +90,14 @@ def create_task(title: str, description: str = "", task_type: str = "action",
         "completed_at": None,
         "completed_by": None,
         "result": None,
+        "estimated_value": estimated_value,
+        "effort_seconds": effort_seconds,
+        "ev_priority": _ev_priority(estimated_value, priority, effort_seconds),
+        "deadline": deadline,
+        "job_id": job_id,
+        "agent_progress": agent_progress or [],
+        "requested_action": requested_action,
+        "resume_event": resume_event,
         "metadata": metadata or {},
     }
     _append(task)
@@ -67,17 +105,17 @@ def create_task(title: str, description: str = "", task_type: str = "action",
 
 
 def get_pending() -> list[dict]:
-    """Get all pending tasks."""
-    return [t for t in _load() if t["status"] == "pending"]
+    """Get pending tasks sorted by EV priority (highest first)."""
+    tasks = [t for t in _load() if t["status"] == "pending"]
+    return sorted(tasks, key=lambda t: t.get("ev_priority", 0), reverse=True)
 
 
 def get_all() -> list[dict]:
-    """Get all tasks."""
     return _load()
 
 
 def complete_task(task_id: str, result: Any = None) -> dict | None:
-    """Mark a task as completed by the human."""
+    """Mark task as completed by human."""
     tasks = _load()
     for t in tasks:
         if t["id"] == task_id:
@@ -91,7 +129,6 @@ def complete_task(task_id: str, result: Any = None) -> dict | None:
 
 
 def reject_task(task_id: str, reason: str = "") -> dict | None:
-    """Reject a task."""
     tasks = _load()
     for t in tasks:
         if t["id"] == task_id:
@@ -105,7 +142,6 @@ def reject_task(task_id: str, reason: str = "") -> dict | None:
 
 
 def check_task(task_id: str) -> dict | None:
-    """Check if a task has been completed."""
     tasks = _load()
     for t in tasks:
         if t["id"] == task_id:
@@ -113,34 +149,124 @@ def check_task(task_id: str) -> dict | None:
     return None
 
 
-# Convenience functions for common agent needs
+def batch_summary() -> dict:
+    """Summarize pending tasks for batch notification."""
+    pending = get_pending()
+    if not pending:
+        return {"count": 0, "total_ev": 0, "tasks": []}
 
-def request_oauth_approval(platform: str, url: str) -> dict:
+    total_ev = sum(t.get("estimated_value", 0) for t in pending)
+    return {
+        "count": len(pending),
+        "total_ev": round(total_ev, 2),
+        "tasks": [
+            {
+                "id": t["id"],
+                "title": t["title"],
+                "type": t["type"],
+                "priority": t["priority"],
+                "ev": t.get("estimated_value", 0),
+                "reason": t.get("description", ""),
+            }
+            for t in pending[:10]
+        ],
+    }
+
+
+# === Convenience creators for common scenarios ===
+
+def request_oauth(platform: str, url: str, job_id: str = "",
+                  estimated_value: float = 0.0) -> dict:
     """Agent needs human to complete OAuth."""
     return create_task(
         title=f"Connect {platform}",
         description=f"Agent needs you to authorize {platform}.\n\nOpen this URL and click Allow:\n{url}",
-        task_type="approval",
-        priority="normal",
+        task_type=AUTH,
+        priority=HIGH if estimated_value > 50 else NORMAL,
+        estimated_value=estimated_value,
+        effort_seconds=30,
+        job_id=job_id,
+        agent_progress=["found opportunity", "estimated EV", "needs access"],
+        requested_action=f"oauth_{platform}",
+        resume_event=f"{platform}_connected",
     )
 
 
-def request_payout_claim(platform: str, amount: float, details: str = "") -> dict:
+def request_payout(platform: str, amount: float, details: str = "",
+                   job_id: str = "") -> dict:
     """Agent won money, human needs to claim payout."""
     return create_task(
         title=f"Claim ${amount:.2f} from {platform}",
         description=f"Agent won a bounty on {platform}.\n\n{details}\n\nYou need to complete the payout claim.",
-        task_type="action",
-        priority="urgent",
+        task_type=PAYMENT,
+        priority=URGENT,
+        estimated_value=amount,
+        effort_seconds=120,
+        job_id=job_id,
+        agent_progress=["work submitted", "work accepted", "prize confirmed"],
+        requested_action=f"claim_{platform}",
+        resume_event=f"{platform}_claimed",
         metadata={"amount": amount, "platform": platform},
     )
 
 
-def request_review(submission_url: str, title: str) -> dict:
-    """Agent wants human to review before submitting."""
+def request_approval(title: str, description: str, cost: float,
+                     expected_value: float, job_id: str = "") -> dict:
+    """Agent wants permission for a spending action."""
     return create_task(
-        title=f"Review: {title}",
-        description=f"Agent wants you to review this submission before it's sent:\n\n{submission_url}",
-        task_type="review",
-        priority="normal",
+        title=title,
+        description=description,
+        task_type=APPROVAL,
+        priority=NORMAL,
+        estimated_value=expected_value,
+        effort_seconds=10,
+        job_id=job_id,
+        agent_progress=["analyzed opportunity", "computed EV"],
+        requested_action="approve_spend",
+        resume_event="spend_approved",
+        metadata={"cost": cost, "expected_value": expected_value},
+    )
+
+
+def request_credential(service: str, purpose: str, job_id: str = "",
+                       estimated_value: float = 0.0) -> dict:
+    """Agent needs an API key or credential."""
+    return create_task(
+        title=f"Add {service} API key",
+        description=f"Agent needs {service} credentials for: {purpose}",
+        task_type=SECRET,
+        priority=NORMAL,
+        estimated_value=estimated_value,
+        effort_seconds=60,
+        job_id=job_id,
+        requested_action=f"credential_{service}",
+        resume_event=f"{service}_configured",
+    )
+
+
+def request_security_review(title: str, description: str,
+                            job_id: str = "") -> dict:
+    """Agent found something suspicious that needs human review."""
+    return create_task(
+        title=title,
+        description=description,
+        task_type=SECURITY,
+        priority=HIGH,
+        effort_seconds=30,
+        job_id=job_id,
+        requested_action="security_review",
+    )
+
+
+def report_exception(title: str, description: str,
+                     job_id: str = "") -> dict:
+    """Agent got stuck and needs human help."""
+    return create_task(
+        title=title,
+        description=description,
+        task_type=EXCEPTION,
+        priority=HIGH,
+        effort_seconds=120,
+        job_id=job_id,
+        requested_action="resolve_exception",
     )

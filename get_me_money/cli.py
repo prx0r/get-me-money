@@ -131,13 +131,39 @@ def doctor():
 @click.option("--list", "list_tasks", is_flag=True, help="List pending human tasks")
 @click.option("--add", "add_title", help="Add a new human task")
 @click.option("--description", default="", help="Task description")
+@click.option("--type", "task_type", default="approval", help="Task type (auth/identity/legal/approval/payment/secret/ambiguity/security/exception)")
+@click.option("--priority", default="normal", help="Priority (urgent/high/normal/low)")
+@click.option("--ev", "estimated_value", type=float, default=0.0, help="Estimated value of completing this task")
 @click.option("--complete", "complete_id", help="Mark task as completed")
-def human_tasks_cmd(list_tasks: bool, add_title: str, description: str, complete_id: str):
+@click.option("--reject", "reject_id", help="Reject a task")
+@click.option("--summary", is_flag=True, help="Show batch summary for notifications")
+def human_tasks_cmd(list_tasks: bool, add_title: str, description: str, task_type: str,
+                    priority: str, estimated_value: float, complete_id: str,
+                    reject_id: str, summary: bool):
     """Manage human task queue — actions the agent needs you to do."""
-    from get_me_money.human_tasks import get_pending, get_all, create_task, complete_task
+    from get_me_money.human_tasks import (
+        get_pending, create_task, complete_task, reject_task, batch_summary,
+    )
+
+    if summary:
+        s = batch_summary()
+        if s["count"] == 0:
+            click.echo("No pending tasks.")
+            return
+        click.echo(f"\n  AGENT NEEDS {s['count']} THINGS")
+        click.echo(f"  Total EV unlocked: ${s['total_ev']:.2f}\n")
+        for t in s["tasks"]:
+            icon = {"auth": "[!]", "payment": "[$]", "approval": "[?]", "secret": "[key]",
+                    "security": "[!]", "exception": "[x]"}.get(t["type"], "[-]")
+            click.echo(f"  {icon} {t['title']}")
+            if t["reason"]:
+                click.echo(f"      {t['reason'][:80]}")
+        click.echo()
+        return
 
     if add_title:
-        task = create_task(add_title, description)
+        task = create_task(add_title, description, task_type=task_type,
+                          priority=priority, estimated_value=estimated_value)
         click.echo(json.dumps(task, indent=2))
         return
 
@@ -145,24 +171,43 @@ def human_tasks_cmd(list_tasks: bool, add_title: str, description: str, complete
         task = complete_task(complete_id)
         if task:
             click.echo(f"Completed: {task['title']}")
+            if task.get("resume_event"):
+                click.echo(f"Resume event: {task['resume_event']}")
         else:
             click.echo("Task not found")
         return
 
-    # Default: list pending
+    if reject_id:
+        reason = click.prompt("Reason", default="")
+        task = reject_task(reject_id, reason)
+        if task:
+            click.echo(f"Rejected: {task['title']}")
+        else:
+            click.echo("Task not found")
+        return
+
+    # Default: list pending sorted by EV priority
     tasks = get_pending()
     if not tasks:
         click.echo("No pending human tasks.")
         return
 
-    click.echo(f"\n  PENDING HUMAN TASKS ({len(tasks)}):\n")
+    total_ev = sum(t.get("estimated_value", 0) for t in tasks)
+    click.echo(f"\n  NEEDS YOU ({len(tasks)} tasks, ~${total_ev:.2f} EV unlocked):\n")
     for t in tasks:
         age = time.time() - t.get("created_at", 0)
         age_str = f"{age/3600:.1f}h" if age > 3600 else f"{age/60:.0f}m"
-        click.echo(f"  [{t['id']}] {t['title']}")
-        click.echo(f"    type: {t.get('type', 'action')}  priority: {t.get('priority', 'normal')}  age: {age_str}")
+        icon = {"auth": "[!]", "payment": "[$]", "approval": "[?]", "secret": "[key]",
+                "security": "[!]", "exception": "[x]"}.get(t.get("type", ""), "[-]")
+        ev = t.get("estimated_value", 0)
+        ev_str = f" ~${ev:.0f} EV" if ev > 0 else ""
+
+        click.echo(f"  {icon} [{t['id']}] {t['title']}")
+        click.echo(f"    type: {t.get('type', 'action')}  priority: {t.get('priority', 'normal')}  age: {age_str}{ev_str}")
         if t.get("description"):
-            click.echo(f"    {t['description'][:100]}")
+            click.echo(f"    {t['description'][:120]}")
+        if t.get("agent_progress"):
+            click.echo(f"    agent did: {' → '.join(t['agent_progress'][:3])}")
         click.echo()
 
 
