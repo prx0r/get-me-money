@@ -193,6 +193,44 @@ def lab(fixture_dir: str, revisions: int):
 
 
 @main.command()
+@click.argument("task_title")
+@click.option("--reward", type=float, default=10.0, help="Total bounty reward")
+@click.option("--max-parts", type=int, default=5, help="Max micro-bounties")
+@click.option("--min-reward", type=float, default=0.10, help="Min reward per micro-bounty")
+def decompose(task_title: str, reward: float, max_parts: int, min_reward: float):
+    """Decompose a big bounty into micro-bounties for other agents."""
+    import logging as _log
+    _log.basicConfig(level=_log.INFO, format="%(asctime)s %(name)s: %(message)s")
+
+    from get_me_money.config import Config
+from get_me_money.employer import decompose_task, format_micro_bounty_post
+from get_me_money.models import Evaluation, Opportunity, Platform
+
+    config = Config()
+    config.load()
+
+    opp = Opportunity(
+        id="decompose", platform=Platform.TASKMARKET, external_id="",
+        title=task_title, description=task_title, reward=reward, currency="USDC",
+    )
+    ev = Evaluation(opportunity_id="decompose", probability_of_success=0.5, ev_cash=0, estimated_cost=0.01)
+
+    decomp = asyncio.run(decompose_task(config, opp, max_parts=max_parts, min_reward_per_part=min_reward))
+
+    click.echo(f"Original: {decomp.original_task[:60]} (${reward:.2f})")
+    click.echo(f"Parts: {len(decomp.micro_tasks)}")
+    click.echo(f"Total cost: ${decomp.total_estimated_cost:.2f}")
+    click.echo(f"Parallel: {decomp.parallelizable}")
+    click.echo()
+
+    for mt in decomp.micro_tasks:
+        click.echo(f"  {mt.id}: {mt.title[:40]} (${mt.estimated_reward:.2f})")
+        click.echo(f"    Skills: {', '.join(mt.skills_needed)}")
+        click.echo(f"    Depends on: {mt.depends_on or 'none'}")
+        click.echo()
+
+
+@main.command()
 @click.option("--execute", is_flag=True, help="Required for real submissions.")
 def daemon(execute: bool):
     """Run continuously on the VPS."""
