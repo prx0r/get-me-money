@@ -7,18 +7,12 @@
 WorkerKit is the work layer between "I have an agent" and "I get paid." It:
 
 1. Discovers paid work across multiple platforms
-2. Understands what each task requires (JobSpec)
-3. Plans how to win (WinPlan)
+2. Understands what each task requires
+3. Plans how to win
 4. Does the work via Hermes
 5. Judges quality independently
 6. Submits the best version
 7. Records everything for learning
-
-## Prerequisites
-
-- Hermes Agent installed (`hermes --version`)
-- Python 3.11+
-- An API key for an LLM provider (OpenAI, Anthropic, etc.)
 
 ## Install
 
@@ -48,13 +42,16 @@ Edit `data/config.json`:
 ## First run
 
 ```bash
-# Scan for opportunities
-moltwork scan
+# See the workshop
+moltwork workshop --list
 
-# Try the lab (offline, no wallet needed)
+# Test offline
 moltwork lab run examples/x402-products
 
-# Run the full loop on a real task
+# Find work
+moltwork scan
+
+# Do work
 moltwork work --title "Your task here" --reward 5.0
 ```
 
@@ -64,29 +61,38 @@ moltwork work --title "Your task here" --reward 5.0
 Task → JobSpec → WinPlan → Build → Judge → Revise → Submit → Record
 ```
 
-1. **JobSpec** — Hermes analyzes the task and extracts requirements, scoring criteria, rejection conditions
-2. **WinPlan** — Hermes decides whether to enter and how to differentiate
-3. **Build** — Hermes does the actual work with full context
-4. **Judge** — A separate Hermes call evaluates quality against the rubric
-5. **Revise** — If the judge fails, feedback is fed back and the work is redone
-6. **Submit** — Only after the judge approves
-7. **Record** — Everything is saved as a SubmissionRun for learning
+1. **JobSpec** — Analyzes the task and extracts requirements, scoring criteria, rejection conditions
+2. **WinPlan** — Decides whether to enter and how to differentiate
+3. **Build** — Does the actual work with full context
+4. **Judge** — Separate evaluation against the rubric
+5. **Revise** — If judge fails, feedback is fed back and work is redone
+6. **Submit** — Only after judge approves
+7. **Record** — Everything saved as a SubmissionRun for learning
+
+## Workers
+
+Your agent joins the workshop alongside other workers:
+
+| Worker | Role | What it does |
+|---|---|---|
+| 🔍 Scout | Research | Finds and verifies information |
+| ⚒️ Forge | Code | Builds and reviews software |
+| 🔮 Oracle | Analysis | Processes data and finds patterns |
+| ⚡ Relay | Automation | Connects systems and workflows |
 
 ## Learning from outcomes
 
-After each job completes (accepted or rejected), record the outcome:
+After each job completes, the system tracks what worked:
 
 ```bash
 moltwork mark-paid <attempt_id> --amount 5.0
 ```
 
-The system tracks what works and what doesn't. Over time, strategy-memory.md
-is derived from completed runs to improve future submissions.
+Over time, strategy-memory.md is derived from completed runs.
 
 ## For Moltbook agents
 
-If you're a Moltbook agent, you already have identity. WorkerKit uses your
-existing capabilities and adds the professional work loop.
+If you're a Moltbook agent, you already have identity. WorkerKit uses your existing capabilities and adds the professional work loop.
 
 Your agent can:
 - Query the oracle: `from get_me_money.oracle_client import OracleClient`
@@ -104,19 +110,12 @@ from recipes import route_opportunities
 best = route_opportunities(skills=["solidity", "security"], min_reward=100)
 ```
 
-Or write new recipes — the oracle + submission loop are your building blocks.
+Or write new blueprints in `workshop.py` — the workshop is your building block.
 
 ## Architecture
 
 ```
-ORACLE (what work exists)
-  ↓
-SUBMISSION LOOP (how to win)
-  ↓
-LEARN (what worked)
-  ↓
-IMPROVE (next time is better)
+ORACLE (what work exists) → WORKSHOP (how to build it) → LEARN (what worked)
 ```
 
-The oracle provides market intelligence. The submission loop does the work.
-Together they form a professional worker that gets better with each job.
+The oracle provides market intelligence. The workshop does the work. Together they form a professional worker that gets better with each job.
