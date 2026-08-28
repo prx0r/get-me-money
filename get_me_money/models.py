@@ -1,5 +1,4 @@
-"""Core data models."""
-
+"""Core production data models for get-me-money."""
 from __future__ import annotations
 
 import hashlib
@@ -41,10 +40,11 @@ class TaskCategory(str, Enum):
 
 
 class Outcome(str, Enum):
-    ATTEMPTED = "attempted"
+    PENDING = "pending"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     SKIPPED = "skipped"
+    BLOCKED = "blocked"
     REJECTED = "rejected"
     TIMEOUT = "timeout"
 
@@ -64,8 +64,8 @@ class Opportunity:
     posted_at: float = 0.0
     expires_at: float = 0.0
     competition_estimate: int = 0
-    verification_strength: float = 0.5  # 0-1, how verifiable is the output
-    payment_reliability: float = 0.5    # 0-1, does this platform actually pay
+    verification_strength: float = 0.5
+    payment_reliability: float = 0.5
     raw: dict[str, Any] = field(default_factory=dict)
     fetched_at: float = field(default_factory=time.time)
 
@@ -76,31 +76,26 @@ class Opportunity:
         return (time.time() - self.posted_at) / 3600
 
     def fingerprint(self) -> str:
-        raw = f"{self.platform.value}:{self.external_id}:{self.title}"
+        stable = self.external_id or self.url or self.title
+        raw = f"{self.platform.value}:{stable}"
         return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 @dataclass
 class Evaluation:
     opportunity_id: str = ""
-    estimated_cost: float = 0.0        # compute + API + fees
+    estimated_cost: float = 0.0
     estimated_hours: float = 0.0
     probability_of_success: float = 0.0
-    competition_score: float = 0.0     # 0-1, higher = more competition
+    competition_score: float = 0.0
+    platform_fee_rate: float = 0.0
     ev_cash: float = 0.0
-    ev_learning: float = 0.0
-    ev_reusable: float = 0.0
-    ev_total: float = 0.0
+    learning_score: float = 0.0
+    reusable_score: float = 0.0
+    rank_score: float = 0.0
     should_attempt: bool = False
     reasoning: str = ""
     evaluated_at: float = field(default_factory=time.time)
-
-    def compute_ev(self, reward: float, p_success: float, cost: float) -> None:
-        self.probability_of_success = p_success
-        self.estimated_cost = cost
-        self.ev_cash = p_success * reward - cost
-        self.ev_total = self.ev_cash + self.ev_learning + self.ev_reusable
-        self.should_attempt = self.ev_total > 0 and p_success > 0.15
 
 
 @dataclass
@@ -110,7 +105,7 @@ class Attempt:
     platform: Platform = Platform.CUSTOM
     external_id: str = ""
     title: str = ""
-    outcome: Outcome = Outcome.ATTEMPTED
+    outcome: Outcome = Outcome.PENDING
     reward: float = 0.0
     cost: float = 0.0
     fees: float = 0.0
@@ -121,39 +116,26 @@ class Attempt:
     notes: str = ""
     started_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
+    updated_at: float = field(default_factory=time.time)
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def finalize(self, outcome: Outcome, reward: float = 0.0, cost: float = 0.0,
-                 fees: float = 0.0, error: str = "") -> None:
+    def finalize(self, outcome: Outcome, reward: float | None = None,
+                 cost: float | None = None, fees: float | None = None,
+                 error: str = "") -> None:
         self.outcome = outcome
-        self.reward = reward
-        self.cost = cost
-        self.fees = fees
-        self.net = reward - cost - fees
+        if reward is not None:
+            self.reward = reward
+        if cost is not None:
+            self.cost = cost
+        if fees is not None:
+            self.fees = fees
+        self.net = self.reward - self.cost - self.fees
         self.error = error
-        self.completed_at = time.time()
-        self.duration_seconds = self.completed_at - self.started_at
-
-
-@dataclass
-class PnLSnapshot:
-    timestamp: float = field(default_factory=time.time)
-    opportunities_seen: int = 0
-    opportunities_attempted: int = 0
-    successes: int = 0
-    failures: int = 0
-    skips: int = 0
-    gross_earned: float = 0.0
-    total_cost: float = 0.0
-    total_fees: float = 0.0
-    net_earned: float = 0.0
-    roi_pct: float = 0.0
-    active_work_revenue: float = 0.0
-    service_revenue: float = 0.0
-    best_platform: str = ""
-    best_category: str = ""
-    avg_ev_per_attempt: float = 0.0
-    strategies: dict[str, dict[str, float]] = field(default_factory=dict)
+        now = time.time()
+        self.updated_at = now
+        if outcome != Outcome.PENDING:
+            self.completed_at = now
+        self.duration_seconds = now - self.started_at
 
 
 @dataclass
@@ -165,7 +147,25 @@ class Strategy:
     total_reward: float = 0.0
     total_cost: float = 0.0
     total_net: float = 0.0
-    avg_ev_per_attempt: float = 0.0
     win_rate: float = 0.0
     avg_reward: float = 0.0
     avg_net: float = 0.0
+
+
+@dataclass
+class PnLSnapshot:
+    timestamp: float = field(default_factory=time.time)
+    opportunities_seen: int = 0
+    opportunities_attempted: int = 0
+    pending: int = 0
+    successes: int = 0
+    failures: int = 0
+    skips: int = 0
+    gross_earned: float = 0.0
+    total_cost: float = 0.0
+    total_fees: float = 0.0
+    net_earned: float = 0.0
+    roi_pct: float = 0.0
+    best_platform: str = ""
+    best_category: str = ""
+    strategies: dict[str, dict[str, float]] = field(default_factory=dict)

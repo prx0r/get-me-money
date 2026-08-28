@@ -1,150 +1,129 @@
-"""CLI + Dashboard server entry point."""
-
+"""Production CLI. Real marketplace writes require an explicit --execute flag."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import sys
-
+import os
+import shutil
+import subprocess
+from pathlib import Path
 import click
 
 from get_me_money.config import Config
 
 
+def _cfg() -> Config:
+    c = Config(); c.load(); return c
+
+
 @click.group()
 @click.option("--log-level", default="INFO")
-def main(log_level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.INFO),
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
+def main(log_level: str):
+    logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
 @main.command()
-def scan() -> None:
-    """Scan all platforms for new opportunities."""
-    import asyncio
+def scan():
+    """Read live earning surfaces. No submissions or financial writes."""
     from get_me_money.main import scan_all
-    config = Config()
-    config.load()
-    results = asyncio.run(scan_all(config))
-    click.echo(json.dumps(results, indent=2, default=str))
+    click.echo(json.dumps(asyncio.run(scan_all(_cfg())), indent=2, default=str))
 
 
 @main.command()
-@click.option("--dry-run", is_flag=True, help="Evaluate but don't execute")
-def run(dry_run: bool) -> None:
-    """Run the full earn cycle: scan → evaluate → attempt → record."""
-    import asyncio
+@click.option("--execute", is_flag=True, help="Perform real Hermes work and marketplace submission. Without this: dry-run only.")
+def run(execute: bool):
+    """Run one scan/evaluate/attempt cycle."""
     from get_me_money.main import earn_cycle
-    config = Config()
-    config.load()
-    result = asyncio.run(earn_cycle(config, dry_run=dry_run))
-    click.echo(json.dumps(result, indent=2, default=str))
+    click.echo(json.dumps(asyncio.run(earn_cycle(_cfg(), execute=execute)), indent=2, default=str))
 
 
 @main.command()
-def dashboard() -> None:
-    """Show current P&L and strategy summary."""
+@click.option("--execute", is_flag=True, help="Required for real submissions.")
+def daemon(execute: bool):
+    """Run continuously on the VPS."""
+    from get_me_money.daemon import run as daemon_run
+    asyncio.run(daemon_run(execute))
+
+
+@main.command()
+def reconcile():
+    """Refresh pending submissions and record real payouts/rejections."""
+    from get_me_money.main import reconcile_pending
+    click.echo(json.dumps(asyncio.run(reconcile_pending(_cfg())), indent=2))
+
+
+@main.command()
+def dashboard():
+    """Print current P&L."""
     from get_me_money.dashboard import get_dashboard_data
-    data = get_dashboard_data()
-
-    click.echo("\n" + "=" * 50)
-    click.echo("  GET-ME-MONEY — P&L Dashboard")
-    click.echo("=" * 50)
-    click.echo(f"  Opportunities attempted: {data.get('opportunities_attempted', 0)}")
-    click.echo(f"  Successes:               {data.get('successes', 0)}")
-    click.echo(f"  Failures:                {data.get('failures', 0)}")
-    click.echo(f"  Gross earned:            ${data.get('gross_earned', 0):.2f}")
-    click.echo(f"  Compute/API costs:       ${data.get('total_cost', 0):.2f}")
-    click.echo(f"  Fees:                    ${data.get('total_fees', 0):.2f}")
-    click.echo(f"  Net earned:              ${data.get('net_earned', 0):.2f}")
-    click.echo(f"  ROI:                     {data.get('roi_pct', 0):.1f}%")
-    click.echo(f"  Best platform:           {data.get('best_platform', 'n/a')}")
-    click.echo(f"  Best category:           {data.get('best_category', 'n/a')}")
-
-    strategies = data.get("strategies", {})
-    if strategies:
-        click.echo("\n  STRATEGIES:")
-        for cat, s in sorted(strategies.items(), key=lambda x: x[1].get("avg_net", 0), reverse=True):
-            click.echo(
-                f"    {cat:20s}  "
-                f"EV/attempt: ${s.get('avg_net', 0):+.2f}  "
-                f"win: {s.get('win_rate', 0):.0%}  "
-                f"n={s.get('attempts', 0)}"
-            )
-    click.echo("")
+    click.echo(json.dumps(get_dashboard_data(), indent=2))
 
 
-@main.command()
-def strategies() -> None:
-    """Show learned strategies."""
-    from get_me_money.memory import Memory
-    mem = Memory()
-    mem.load()
-    summary = mem.summary()
+@main.command("mark-paid")
+@click.argument("attempt_id")
+@click.option("--amount", type=float, required=True)
+@click.option("--fee", type=float, default=0.0)
+@click.option("--reference", default="")
+def mark_paid(attempt_id: str, amount: float, fee: float, reference: str):
+    """Human reconciliation for a payout source without an official result-read API."""
+    from get_me_money.ledger import get_attempt, save_attempt
+    from get_me_money.models import Outcome
+    a = get_attempt(attempt_id)
+    if not a: raise click.ClickException("attempt not found")
+    a.finalize(Outcome.SUCCEEDED, reward=amount, fees=fee)
+    if reference: a.metadata["settlement_reference"] = reference
+    save_attempt(a); click.echo(json.dumps({"ok": True, "attempt_id": a.id, "net": a.net}, indent=2))
 
-    click.echo("\n  BEST STRATEGIES (learned from history):")
-    for s in summary.get("best_strategies", []):
-        click.echo(
-            f"    {s['cat']:20s} on {s['platform']:12s}  "
-            f"net: ${s['net']:+.2f}  win: {s['win_rate']:.0%}  n={s['n']}"
-        )
 
-    click.echo("\n  WORST STRATEGIES (avoid these):")
-    for s in summary.get("worst_strategies", []):
-        click.echo(
-            f"    {s['cat']:20s} on {s['platform']:12s}  "
-            f"net: ${s['net']:+.2f}  win: {s['win_rate']:.0%}  n={s['n']}"
-        )
-    click.echo("")
+@main.command("superteam-register")
+@click.argument("name")
+def superteam_register(name: str):
+    """Register an official Superteam agent identity. Human payout claim remains separate."""
+    from get_me_money.platforms.superteam import SuperteamAdapter
+    data = asyncio.run(SuperteamAdapter.register(name))
+    click.echo(json.dumps(data, indent=2))
+    click.echo("\nStore apiKey as SUPERTEAM_KEY in your private EnvironmentFile. Keep claimCode for the human payout-claim flow.", err=True)
 
 
 @main.command()
-def health() -> None:
-    """Check health of all platform adapters."""
-    import asyncio
-    from get_me_money.main import get_adapters
-    config = Config()
-    config.load()
-    adapters = get_adapters(config)
+def doctor():
+    """Production preflight. Does not accept terms or change accounts."""
+    c = _cfg(); rows=[]
+    def add(name, ok, detail): rows.append((name, bool(ok), str(detail)))
 
-    async def _check():
-        for name, adapter in adapters.items():
-            ok = await adapter.health_check()
-            status = "OK" if ok else "DOWN"
-            click.echo(f"  {name:15s} [{status}]")
+    hermes = shutil.which(c.hermes.binary)
+    add("hermes binary", hermes, hermes or "not found")
+    if hermes:
+        try:
+            r=subprocess.run([hermes,"--version"],capture_output=True,text=True,timeout=20); add("hermes version", r.returncode==0,(r.stdout or r.stderr).strip())
+            env=os.environ.copy()
+            if c.hermes.home: env["HERMES_HOME"]=c.hermes.home
+            d=subprocess.run([hermes,"dump"],capture_output=True,text=True,timeout=30,env=env)
+            dump=(d.stdout or d.stderr)
+            terminal_line=next((x.strip() for x in dump.splitlines() if x.strip().startswith("terminal:")), "terminal: unknown")
+            add("Hermes isolated profile", bool(c.hermes.home), c.hermes.home or "set GMM_HERMES_HOME; do not expose controller credentials to marketplace work")
+            add("Hermes terminal isolation", "docker" in terminal_line.lower(), terminal_line + " (Docker recommended)")
+        except Exception as e: add("hermes diagnostics",False,e)
 
-    asyncio.run(_check())
+    tm=shutil.which("taskmarket"); add("taskmarket CLI", tm, tm or "install @lucid-agents/taskmarket")
+    if tm:
+        for label,args in (("taskmarket identity",["identity","status"]),("taskmarket legal",["legal","status"]),("taskmarket read",["task","list","--status","open","--limit","1"])):
+            try:
+                r=subprocess.run([tm,*args],capture_output=True,text=True,timeout=30); text=(r.stdout or r.stderr).strip(); ok=r.returncode==0
+                if label=="taskmarket legal" and ok:
+                    try: ok=bool(json.loads(text).get("data",{}).get("accepted"))
+                    except Exception: ok=False
+                add(label,ok,text[:500])
+            except Exception as e: add(label,False,e)
 
+    if c.platforms.superteam_enabled:
+        add("Superteam API key", bool(c.platforms.superteam_key), "configured" if c.platforms.superteam_key else "optional; discovery disabled until SUPERTEAM_KEY is set")
 
-@main.command()
-def auth() -> None:
-    """Show auth status for all platforms."""
-    from get_me_money.identity import IdentityManager
-    mgr = IdentityManager()
-    summary = mgr.status_summary()
-
-    click.echo("\n  PLATFORM AUTH STATUS:")
-    click.echo("  " + "-" * 55)
-    for platform, info in sorted(summary.items()):
-        status = "VALID" if info["valid"] else "NEEDS AUTH"
-        if info["needs_human"]:
-            status = f"HUMAN REQUIRED: {info['reason']}"
-        click.echo(f"  {platform:15s}  {info['auth_type']:15s}  {status}")
-    click.echo("")
-
-
-@main.command()
-@click.argument("platform")
-@click.argument("api_key")
-def register_key(platform: str, api_key: str) -> None:
-    """Register an API key for a platform."""
-    from get_me_money.identity import IdentityManager
-    mgr = IdentityManager()
-    mgr.register_api_key(platform, api_key)
-    click.echo(f"  Registered API key for {platform}")
+    for name,ok,detail in rows:
+        click.echo(f"{'OK  ' if ok else 'FAIL'} {name:28s} {detail}")
+    if any(not ok for _,ok,_ in rows):
+        raise SystemExit(1)
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()

@@ -1,173 +1,97 @@
-"""Opportunity evaluator — EV scoring, cost estimation, go/no-go."""
-
+"""Cash-EV evaluator. Learning is used to calibrate probabilities, not invented dollars."""
 from __future__ import annotations
 
-import logging
-from typing import Optional
-
+import time
 from get_me_money.config import Config
-from get_me_money.models import (
-    Evaluation, Opportunity, Platform, TaskCategory,
-)
+from get_me_money.memory import Memory
+from get_me_money.models import Evaluation, Opportunity, Platform, TaskCategory
 
-log = logging.getLogger(__name__)
-
-# Base cost rates (USD per unit)
-COST_PER_1K_TOKENS = 0.003       # approximate inference cost
-COST_PER_HTTP_REQ = 0.0002       # approximate API call
-COST_PER_BOUNTY_FEE = 0.10       # 10% typical marketplace fee
-
-# Category difficulty weights (hours, rough estimates)
+COST_PER_1K_TOKENS = 0.003
+TOKENS_PER_HOUR = 15_000
+HTTP_COST_PER_HOUR = 0.001
 CATEGORY_HOURS = {
-    TaskCategory.RESEARCH: 1.5,
-    TaskCategory.DATA_EXTRACTION: 1.0,
-    TaskCategory.CODE_FIX: 3.0,
-    TaskCategory.CODE_FEATURE: 5.0,
-    TaskCategory.CONTENT: 2.0,
-    TaskCategory.DOCUMENTATION: 1.5,
-    TaskCategory.API_WORK: 2.5,
-    TaskCategory.TESTING: 2.0,
-    TaskCategory.DESIGN: 3.0,
-    TaskCategory.UNKNOWN: 2.0,
+    TaskCategory.RESEARCH: 0.75,
+    TaskCategory.DATA_EXTRACTION: 0.75,
+    TaskCategory.CODE_FIX: 2.0,
+    TaskCategory.CODE_FEATURE: 3.0,
+    TaskCategory.CONTENT: 1.0,
+    TaskCategory.DOCUMENTATION: 1.0,
+    TaskCategory.API_WORK: 1.5,
+    TaskCategory.TESTING: 1.5,
+    TaskCategory.DESIGN: 2.0,
+    TaskCategory.UNKNOWN: 1.5,
 }
-
-# Platform fee percentages
-PLATFORM_FEES = {
-    Platform.BOUNTY: 0.10,
-    Platform.ALGORA: 0.0,      # paid via PR merge, no platform fee
-    Platform.OPIRE: 0.0,
-    Platform.CLUSTLY: 0.04,
-    Platform.SUPERTEAM: 0.0,
-    Platform.TASKMARKET: 0.075,  # 7.5% USDC fee
-    Platform.AGENTHANSA: 0.0,    # affiliate model, not task fee
-    Platform.OLAS: 0.0,
-    Platform.VIRTUALS: 0.0,
-}
+PLATFORM_FEES = {Platform.TASKMARKET: 0.075, Platform.SUPERTEAM: 0.0}
 
 
 class Evaluator:
-    """Decides which opportunities are worth attempting."""
-
     def __init__(self, config: Config):
         self.config = config
+        self.memory = Memory()
 
     def evaluate(self, opp: Opportunity) -> Evaluation:
         ev = Evaluation(opportunity_id=opp.id)
-
-        # Estimate cost
-        hours = CATEGORY_HOURS.get(opp.category, 2.0)
-        token_cost = hours * (15_000 / 1000) * COST_PER_1K_TOKENS  # ~15k tokens/hr of work
-        api_cost = hours * 5 * COST_PER_HTTP_REQ           # ~5 API calls/hr
-        fee_pct = PLATFORM_FEES.get(opp.platform, 0.10)
-        fee = opp.reward * fee_pct
-        ev.estimated_cost = token_cost + api_cost + fee
+        hours = CATEGORY_HOURS.get(opp.category, 1.5)
         ev.estimated_hours = hours
+        ev.estimated_cost = (hours * TOKENS_PER_HOUR / 1000.0 * COST_PER_1K_TOKENS) + (hours * HTTP_COST_PER_HOUR)
+        ev.platform_fee_rate = PLATFORM_FEES.get(opp.platform, 0.0)
+        ev.competition_score = self._competition_score(opp.competition_estimate)
 
-        # Estimate probability of success
-        p = self._estimate_p_success(opp)
-        ev.competition_score = self._competition_score(opp)
+        prior = self._prior_probability(opp)
+        p = self.memory.calibrated_probability(opp.category.value, opp.platform.value, prior)
+        ev.probability_of_success = p
+        ev.ev_cash = p * opp.reward * (1.0 - ev.platform_fee_rate) - ev.estimated_cost
+        ev.learning_score = self._learning_score(opp)
+        ev.reusable_score = self._reusable_score(opp)
+        # Cash EV dominates; learning only breaks ties rather than pretending to be USD.
+        ev.rank_score = ev.ev_cash + 0.02 * ev.learning_score + 0.02 * ev.reusable_score
 
-        # Learning value — how reusable is this skill?
-        ev.ev_learning = self._learning_value(opp)
-        ev.ev_reusable = self._reusable_asset_value(opp)
-
-        # Compute EV
-        ev.compute_ev(reward=opp.reward, p_success=p, cost=ev.estimated_cost)
-
-        # Final gate checks
-        budget = self.config.budget
-        if opp.reward < budget.min_reward:
-            ev.should_attempt = False
-            ev.reasoning = f"Reward ${opp.reward:.2f} < min ${budget.min_reward:.2f}"
-        elif ev.ev_total < budget.min_ev:
-            ev.should_attempt = False
-            ev.reasoning = f"EV ${ev.ev_total:.2f} < min ${budget.min_ev:.2f}"
-        elif ev.estimated_cost > budget.per_attempt_cap:
-            ev.should_attempt = False
-            ev.reasoning = f"Cost ${ev.estimated_cost:.2f} > cap ${budget.per_attempt_cap:.2f}"
-        elif p < 0.10:
-            ev.should_attempt = False
-            ev.reasoning = f"P(success) {p:.0%} < 10%"
+        b = self.config.budget
+        if opp.expires_at and opp.expires_at <= time.time():
+            ev.reasoning = "expired"
+        elif not opp.raw.get("execution_supported", True):
+            ev.reasoning = str(opp.raw.get("execution_block_reason", "platform flow not safely automatable"))
+        elif opp.currency.upper() not in {"USD", "USDC"}:
+            ev.reasoning = f"unsupported currency {opp.currency}"
+        elif opp.reward < b.min_reward:
+            ev.reasoning = f"reward ${opp.reward:.2f} below minimum ${b.min_reward:.2f}"
+        elif ev.estimated_cost > b.per_attempt_cap:
+            ev.reasoning = f"estimated cost ${ev.estimated_cost:.3f} exceeds per-attempt cap ${b.per_attempt_cap:.2f}"
+        elif p < b.min_success_probability:
+            ev.reasoning = f"estimated success probability {p:.1%} below floor {b.min_success_probability:.1%}"
+        elif ev.ev_cash < b.min_ev:
+            ev.reasoning = f"cash EV ${ev.ev_cash:.3f} below minimum ${b.min_ev:.2f}"
         else:
-            ev.reasoning = (
-                f"EV=${ev.ev_total:.2f} P={p:.0%} cost=${ev.estimated_cost:.2f} "
-                f"reward=${opp.reward:.2f}"
-            )
-
+            ev.should_attempt = True
+            ev.reasoning = f"cashEV=${ev.ev_cash:.3f} p={p:.1%} estCost=${ev.estimated_cost:.3f} reward=${opp.reward:.2f}"
         return ev
 
-    def _estimate_p_success(self, opp: Opportunity) -> float:
-        """Estimate probability of successful completion + payout."""
-        base = 0.35  # base rate
+    def rank(self, rows):
+        return sorted(rows, key=lambda x: x[1].rank_score, reverse=True)
 
-        # Platform reliability adjustment
-        base *= opp.payment_reliability
+    def _prior_probability(self, opp: Opportunity) -> float:
+        p = 0.30 * max(0.25, min(1.0, opp.payment_reliability))
+        if opp.category in {TaskCategory.RESEARCH, TaskCategory.DATA_EXTRACTION, TaskCategory.DOCUMENTATION}:
+            p *= 1.25
+        if opp.category in {TaskCategory.CODE_FEATURE, TaskCategory.DESIGN}:
+            p *= 0.75
+        if opp.competition_estimate >= 30:
+            p *= 0.40
+        elif opp.competition_estimate >= 15:
+            p *= 0.60
+        elif opp.competition_estimate >= 5:
+            p *= 0.80
+        p *= 0.7 + 0.3 * max(0, min(1, opp.verification_strength))
+        return max(0.03, min(0.70, p))
 
-        # Category difficulty adjustment
-        hours = CATEGORY_HOURS.get(opp.category, 2.0)
-        if hours <= 1.5:
-            base *= 1.2   # simpler tasks, higher success
-        elif hours >= 4.0:
-            base *= 0.7   # complex tasks, lower success
+    @staticmethod
+    def _competition_score(n: int) -> float:
+        return min(1.0, max(0.0, n / 40.0))
 
-        # Competition adjustment
-        if opp.competition_estimate > 20:
-            base *= 0.6
-        elif opp.competition_estimate > 10:
-            base *= 0.8
+    @staticmethod
+    def _learning_score(opp: Opportunity) -> float:
+        return 1.0 if opp.category in {TaskCategory.RESEARCH, TaskCategory.CODE_FIX, TaskCategory.API_WORK} else 0.4
 
-        # Verification strength — easier to verify = easier to get paid
-        base *= (0.7 + 0.3 * opp.verification_strength)
-
-        # Reward amount — bigger rewards attract more competition
-        if opp.reward > 500:
-            base *= 0.8
-        elif opp.reward > 100:
-            base *= 0.9
-
-        return max(0.05, min(0.95, base))
-
-    def _competition_score(self, opp: Opportunity) -> float:
-        c = opp.competition_estimate
-        if c == 0:
-            return 0.1
-        if c <= 5:
-            return 0.3
-        if c <= 15:
-            return 0.5
-        if c <= 30:
-            return 0.7
-        return 0.9
-
-    def _learning_value(self, opp: Opportunity) -> float:
-        """How much does attempting this teach us? 0-1 scale."""
-        score = 0.0
-        # Research/data extraction builds reusable skills
-        if opp.category in (TaskCategory.RESEARCH, TaskCategory.DATA_EXTRACTION):
-            score += 0.3
-        # Code work builds reusable patterns
-        if opp.category in (TaskCategory.CODE_FIX, TaskCategory.CODE_FEATURE):
-            score += 0.2
-        # API work is directly reusable
-        if opp.category == TaskCategory.API_WORK:
-            score += 0.4
-        # New platform = learning
-        if opp.platform not in (Platform.BOUNTY, Platform.ALGORA):
-            score += 0.1
-        return min(1.0, score)
-
-    def _reusable_asset_value(self, opp: Opportunity) -> float:
-        """Could the output of this task become a paid service?"""
-        if opp.category == TaskCategory.API_WORK:
-            return 0.5
-        if opp.category == TaskCategory.DATA_EXTRACTION:
-            return 0.4
-        if opp.category == TaskCategory.RESEARCH:
-            return 0.3
-        if opp.category in (TaskCategory.CODE_FIX, TaskCategory.CODE_FEATURE):
-            return 0.2
-        return 0.1
-
-    def rank(self, evaluations: list[tuple[Opportunity, Evaluation]]) -> list[tuple[Opportunity, Evaluation]]:
-        """Sort by EV total, descending."""
-        return sorted(evaluations, key=lambda x: x[1].ev_total, reverse=True)
+    @staticmethod
+    def _reusable_score(opp: Opportunity) -> float:
+        return 1.0 if opp.category in {TaskCategory.API_WORK, TaskCategory.DATA_EXTRACTION} else 0.3

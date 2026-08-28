@@ -1,127 +1,80 @@
-"""Executor + Verifier — attempt work and validate results."""
-
+"""Execution lifecycle: work -> validate -> first-party platform submit -> pending reconciliation."""
 from __future__ import annotations
 
-import logging
 import time
-from typing import Optional
-
 from get_me_money.config import Config
-from get_me_money.identity import IdentityManager
-from get_me_money.models import (
-    Attempt, Evaluation, Opportunity, Outcome, Platform,
-)
+from get_me_money.executor.workers import run_task
+from get_me_money.hermes_runtime import HermesError
+from get_me_money.models import Attempt, Evaluation, Opportunity, Outcome, Platform
 from get_me_money.platforms import BaseAdapter
-
-log = logging.getLogger(__name__)
 
 
 class Executor:
-    """Manages the attempt lifecycle: claim → execute → submit → verify."""
-
-    def __init__(self, config: Config, adapters: dict[Platform, BaseAdapter],
-                 identity: IdentityManager | None = None):
+    def __init__(self, config: Config, adapters: dict[Platform, BaseAdapter]):
         self.config = config
         self.adapters = adapters
-        self.identity = identity or IdentityManager()
 
     async def execute(self, opp: Opportunity, ev: Evaluation) -> Attempt:
-        """Full execution pipeline for a single opportunity."""
-        attempt = Attempt(
-            opportunity_id=opp.id,
-            platform=opp.platform,
-            external_id=opp.external_id,
-            title=opp.title,
-            started_at=time.time(),
+        a = Attempt(
+            opportunity_id=opp.id, platform=opp.platform, external_id=opp.external_id,
+            title=opp.title, metadata={
+                "category": opp.category.value,
+                "predicted_p": ev.probability_of_success,
+                "predicted_cash_ev": ev.ev_cash,
+                "estimated_cost": ev.estimated_cost,
+                "reward_offered": opp.reward,
+            },
         )
-
-        # Pre-flight: check auth
-        needs_human, reason = self.identity.needs_human_action(opp.platform.value)
-        if needs_human:
-            log.warning("Skipping %s — needs human auth: %s", opp.title, reason)
-            attempt.notes = f"Skipped: needs human auth — {reason}"
-            attempt.finalize(Outcome.SKIPPED, error=reason)
-            return attempt
-
         adapter = self.adapters.get(opp.platform)
         if not adapter:
-            attempt.finalize(Outcome.FAILED, cost=0, error=f"No adapter for {opp.platform}")
-            return attempt
+            a.finalize(Outcome.BLOCKED, error="No live adapter")
+            return a
 
         try:
-            # Step 1: Claim
-            log.info("Claiming: %s on %s", opp.title, opp.platform.value)
             claimed = await adapter.claim(opp)
             if not claimed:
-                attempt.finalize(Outcome.REJECTED, error="Could not claim")
-                return attempt
+                a.finalize(Outcome.BLOCKED, error="Platform pre-submit/claim gate not satisfied")
+                return a
 
-            # Step 2: Execute the actual work
-            log.info("Executing: %s", opp.title)
-            result = await self._do_work(opp, ev)
-            if not result.get("success"):
-                attempt.finalize(
-                    Outcome.FAILED,
-                    error=result.get("error", "Work execution failed"),
-                )
-                return attempt
+            result = await run_task(self.config, opp, ev)
+            a.cost = float(result.get("cost", 0) or 0)
+            a.metadata["workdir"] = result.get("workdir", "")
+            a.metadata["usage"] = result.get("usage", {})
+            a.metadata["artifacts"] = result.get("artifacts", [])
 
-            # Step 3: Submit
-            log.info("Submitting: %s", opp.title)
-            submitted = await adapter.submit(opp, result)
-            if not submitted:
-                attempt.finalize(Outcome.FAILED, error="Submission failed")
-                return attempt
+            if a.cost > self.config.budget.per_attempt_cap:
+                a.finalize(Outcome.FAILED, cost=a.cost, error="Actual Hermes cost exceeded per-attempt cap; result not submitted")
+                return a
 
-            # Step 4: Verify (check if accepted/paid)
-            log.info("Verifying: %s", opp.title)
+            submission = await adapter.submit(opp, result)
+            if not submission.get("ok"):
+                a.finalize(Outcome.FAILED, cost=a.cost, error=submission.get("error", "submission failed"))
+                return a
+
+            a.submission_url = str(submission.get("url", result.get("url", "")))
+            a.metadata["submission"] = submission
+            a.outcome = Outcome.PENDING
+            a.updated_at = time.time()
+            a.duration_seconds = time.time() - a.started_at
+
+            # Some systems settle immediately; otherwise reconciliation updates this later.
             status = await adapter.check_status(opp)
-            paid = status.get("paid", False) or status.get("status") == "completed"
-
-            if paid:
-                attempt.finalize(
-                    Outcome.SUCCEEDED,
-                    reward=opp.reward,
-                    cost=ev.estimated_cost,
-                    fees=opp.reward * 0.1,  # estimate fees
-                )
-            else:
-                # Submitted but not yet verified — mark as attempted
-                attempt.outcome = Outcome.ATTEMPTED
-                attempt.submission_url = result.get("url", "")
-                attempt.completed_at = time.time()
-                attempt.duration_seconds = attempt.completed_at - attempt.started_at
-                attempt.cost = ev.estimated_cost
-
+            self.apply_status(a, status)
+        except HermesError as e:
+            a.metadata["usage"] = e.usage
+            a.finalize(Outcome.FAILED, cost=max(a.cost, e.cost), error=str(e))
         except Exception as e:
-            log.error("Execution error for %s: %s", opp.title, e)
-            attempt.finalize(Outcome.FAILED, error=str(e))
+            a.finalize(Outcome.FAILED, cost=a.cost, error=f"{type(e).__name__}: {e}")
+        return a
 
-        return attempt
-
-    async def _do_work(self, opp: Opportunity, ev: Evaluation) -> dict:
-        """Dispatch to the appropriate worker based on category.
-
-        This is the core "do real work" function. Each category has a
-        specialized handler.
-        """
-        from get_me_money.executor.workers import (
-            run_research_task,
-            run_code_fix_task,
-            run_data_extraction_task,
-            run_content_task,
-        )
-
-        handlers = {
-            "research": run_research_task,
-            "code_fix": run_code_fix_task,
-            "code_feature": run_code_fix_task,
-            "data_extraction": run_data_extraction_task,
-            "content": run_content_task,
-            "documentation": run_content_task,
-            "api_work": run_data_extraction_task,
-            "testing": run_code_fix_task,
-        }
-
-        handler = handlers.get(opp.category.value, run_research_task)
-        return await handler(opp, ev)
+    @staticmethod
+    def apply_status(a: Attempt, status: dict) -> Attempt:
+        if status.get("paid"):
+            reward = float(status.get("worker_payment", status.get("reward", 0)) or 0)
+            fees = float(status.get("fee", 0) or 0)
+            a.finalize(Outcome.SUCCEEDED, reward=reward, fees=fees)
+            if status.get("tx_hash"):
+                a.metadata["settlement_tx_hash"] = status["tx_hash"]
+        elif status.get("terminal") and status.get("won") is False:
+            a.finalize(Outcome.REJECTED)
+        return a

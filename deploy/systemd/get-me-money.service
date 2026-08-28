@@ -1,0 +1,18 @@
+[Unit]
+Description=get-me-money autonomous earning controller
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/get-me-money
+EnvironmentFile=%h/get-me-money/.env
+ExecStart=%h/get-me-money/.venv/bin/gmm-daemon --execute
+Restart=on-failure
+RestartSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

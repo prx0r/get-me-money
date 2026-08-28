@@ -1,0 +1,17 @@
+[Unit]
+Description=get-me-money localhost dashboard
+After=get-me-money.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/get-me-money
+EnvironmentFile=%h/get-me-money/.env
+ExecStart=%h/get-me-money/.venv/bin/gmm-serve --host 127.0.0.1 --port 8787
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
