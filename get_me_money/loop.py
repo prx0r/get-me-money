@@ -81,6 +81,26 @@ async def run_submission_loop(
 
     t0 = time.time()
 
+    # ── Step 0: Economic preflight ──────────────────────────────────────
+    from get_me_money.economics import CostModel, RunMeter, Reforecaster
+    cost_model = CostModel()
+    meter = RunMeter()
+    reforecaster = Reforecaster(cost_model, meter)
+
+    # Project costs before starting
+    task_type = jobspec.deliverable_format if jobspec else "mixed"
+    envelope = cost_model.estimate(task_type)
+    p_success = cost_model.success_rate(task_type)
+    expected_payout = p_success * opp.reward
+    expected_net = expected_payout - envelope.expected
+
+    log.info(f"  Preflight: reward=${opp.reward:.2f} p_success={p_success:.0%} "
+             f"cost=${envelope.expected:.2f} (low=${envelope.low:.2f} high=${envelope.high:.2f}) "
+             f"net=${expected_net:.2f}")
+
+    if expected_net < 0 and opp.execution_mode.value <= 1:
+        log.warning(f"  NEGATIVE EV: expected net ${expected_net:.2f} — still proceeding (learning)")
+
     # ── Step 1: Generate JobSpec ──────────────────────────────────────────
     log.info(f"[{run.task_title[:40]}] Step 1: JobSpec...")
     t1 = time.time()
@@ -320,6 +340,24 @@ async def run_submission_loop(
         result.attempt.outcome = Outcome.PENDING
     else:
         result.attempt.finalize(Outcome.FAILED, cost=0, error="Judge did not approve" if best_candidate else "No candidate produced")
+
+    # ── Step 9: Record economics outcome ─────────────────────────────────
+    # Update cost model with actual results
+    actual_cost = meter.total_cost
+    outcome_success = result.submitted
+    cost_model.record(task_type, config.hermes.model or "unknown", actual_cost, outcome_success)
+
+    # Final reforecast
+    final_economics = reforecaster.reforecast(task_type, config.hermes.model or "unknown", opp.reward, 1.0)
+    a.metadata["economics"] = {
+        "reward": opp.reward,
+        "actual_cost": actual_cost,
+        "expected_cost": envelope.expected,
+        "p_success": p_success,
+        "expected_payout": expected_payout,
+        "actual_net": opp.reward - actual_cost,
+        "decision": final_economics.decision,
+    }
 
     elapsed = time.time() - t0
     log.info(f"[{run.task_title[:40]}] Done ({elapsed:.0f}s): "
