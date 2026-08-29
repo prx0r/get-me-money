@@ -32,6 +32,8 @@ class HermesRunner:
         # Workspace: explicit > default (always honor workspace if provided)
         if self.job_profile.get("workspace"):
             workdir = Path(self.job_profile["workspace"])
+        elif self.job_profile.get("hermes_home"):
+            workdir = Path(self.job_profile["workspace"]) if self.job_profile.get("workspace") else self.config.work_dir / f"{opp.platform.value}-{opp.id}"
         else:
             workdir = self.config.work_dir / f"{opp.platform.value}-{opp.id}"
         workdir.mkdir(parents=True, exist_ok=True)

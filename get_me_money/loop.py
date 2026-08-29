@@ -35,6 +35,10 @@ from get_me_money.platforms import BaseAdapter
 from get_me_money.submission_run import SubmissionRun, CandidateRecord
 from get_me_money.verifier import Verifier, VerificationResult
 
+
+def sha256(data: str) -> str:
+    return hashlib.sha256(data.encode()).hexdigest()[:16]
+
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_REVISIONS = 2
@@ -79,6 +83,12 @@ async def run_submission_loop(
     )
     result = LoopResult(run=run)
 
+    # Create attempt early — all steps reference it
+    a = Attempt(
+        opportunity_id=opp.id, platform=opp.platform, external_id=opp.external_id,
+        title=opp.title,
+    )
+
     t0 = time.time()
 
     # ── Step 0: Economic preflight ──────────────────────────────────────
@@ -88,6 +98,7 @@ async def run_submission_loop(
     reforecaster = Reforecaster(cost_model, meter)
 
     # Project costs before starting
+    jobspec = _fallback_jobspec(opp)  # pre-initialize for preflight
     task_type = jobspec.deliverable_format if jobspec else "mixed"
     envelope = cost_model.estimate(task_type)
     p_success = cost_model.success_rate(task_type)
@@ -286,11 +297,19 @@ async def run_submission_loop(
             if submission.get("ok"):
                 run.external_status = "pending"
                 result.submitted = True
+                a.outcome = Outcome.PENDING
+                a.submission_url = str(submission.get("submission_id", ""))
+                a.duration_seconds = time.time() - a.started_at
                 log.info(f"  Submitted: {submission.get('submission_id', '?')}")
             else:
                 log.warning(f"  Submit failed: {submission.get('error', '?')}")
+                a.finalize(Outcome.FAILED, cost=0, error=submission.get("error", "submit failed"))
         except Exception as e:
             log.warning(f"  Submit error: {e}")
+            a.finalize(Outcome.FAILED, cost=0, error=str(e))
+    else:
+        reason = "No submittable candidate" if not best_candidate else "Judge did not approve"
+        a.finalize(Outcome.FAILED, cost=0, error=reason)
 
     # ── Step 6.5: Human gates ────────────────────────────────────────────
     if opp.has_human_gates and result.submitted:
@@ -355,16 +374,6 @@ async def run_submission_loop(
     provenance.save(run_dir / "provenance")
     a.metadata["provenance_root_hash"] = provenance.root_hash()
 
-    # Save attempt for ledger compatibility
-    result.attempt = Attempt(
-        opportunity_id=opp.id, platform=opp.platform, external_id=opp.external_id,
-        title=opp.title, metadata={"run_dir": str(run_dir)},
-    )
-    if result.submitted:
-        result.attempt.outcome = Outcome.PENDING
-    else:
-        result.attempt.finalize(Outcome.FAILED, cost=0, error="Judge did not approve" if best_candidate else "No candidate produced")
-
     # ── Step 9: Record economics outcome ─────────────────────────────────
     # Update cost model with actual results
     actual_cost = meter.total_cost
@@ -382,6 +391,9 @@ async def run_submission_loop(
         "actual_net": opp.reward - actual_cost,
         "decision": final_economics.decision,
     }
+
+    # Finalize attempt
+    result.attempt = a
 
     elapsed = time.time() - t0
     log.info(f"[{run.task_title[:40]}] Done ({elapsed:.0f}s): "
