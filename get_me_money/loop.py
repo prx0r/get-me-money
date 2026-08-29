@@ -331,6 +331,30 @@ async def run_submission_loop(
     run_dir.joinpath("snapshot_digest.txt").write_text(snapshot.digest())
     a.metadata["snapshot_digest"] = snapshot.digest()
 
+    # ── Step 8.5: Record provenance (content-addressed WorkerRun) ───────
+    from get_me_money.provenance import WorkerRun
+    provenance = WorkerRun(
+        run_id=f"run-{int(time.time())}",
+        agent_config_hash=snapshot.digest(),
+        model_used=config.hermes.model or "unknown",
+        output_hash=sha256(best_candidate.content) if best_candidate else "",
+        output_preview=best_candidate.content[:200] if best_candidate else "",
+        submitted=result.submitted,
+    )
+    # Add events from the run
+    provenance.add_event("run_started", {"task": opp.title[:60]})
+    if best_candidate:
+        provenance.add_event("candidate_selected", {
+            "version": best_candidate.version,
+            "score": best_candidate.judge_score,
+        })
+    provenance.add_event("run_completed", {
+        "submitted": result.submitted,
+        "cost": meter.total_cost,
+    })
+    provenance.save(run_dir / "provenance")
+    a.metadata["provenance_root_hash"] = provenance.root_hash()
+
     # Save attempt for ledger compatibility
     result.attempt = Attempt(
         opportunity_id=opp.id, platform=opp.platform, external_id=opp.external_id,
