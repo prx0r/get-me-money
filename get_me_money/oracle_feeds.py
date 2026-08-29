@@ -63,6 +63,45 @@ class DemandSignal:
     trend_30d: float = 0.0
 
 
+@dataclass
+class IncentiveSignal:
+    """Earn by being the best implementation."""
+    capability: str = ""
+    source: str = ""
+    reward_potential: str = ""  # HIGH/MEDIUM/LOW
+    competition: str = ""  # HIGH/MEDIUM/LOW
+    entry_cost_usd: float = 0.0
+    benchmark_available: bool = False
+    score_gap: float = 0.0  # vs incumbent
+
+
+@dataclass
+class ResourceSignal:
+    """Compute/infrastructure supply."""
+    resource_type: str = ""  # GPU, CPU, TEE
+    source: str = ""
+    availability: int = 0
+    price_per_hour: float = 0.0
+    region: str = ""
+
+
+@dataclass
+class OpportunityRanking:
+    """Vector ranking — not a single number."""
+    expected_payout_usd: float = 0.0
+    expected_cost_usd: float = 0.0
+    expected_net_usd: float = 0.0
+    wall_time_hours: float = 0.0
+    human_time_minutes: float = 0.0
+    capital_required_usd: float = 0.0
+    p_get_paid: float = 0.0
+    autonomy: str = "H0"
+    confidence: float = 0.0
+    skill_reuse: str = ""  # HIGH/MEDIUM/LOW
+    learning_value: str = ""  # HIGH/MEDIUM/LOW
+    recurring_upside: str = ""  # HIGH/MEDIUM/LOW
+
+
 class OracleFeeds:
     """Three feeds from the oracle:
 
