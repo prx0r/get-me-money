@@ -56,6 +56,33 @@ class Outcome(str, Enum):
     PAUSED_HUMAN = "paused_human"
 
 
+class AssetType(str, Enum):
+    """Six classes of productive assets in the Moltwork economy."""
+    SAMPLE = "sample"        # winning example (reference)
+    STARTER = "starter"      # 70% done, buyer finishes 30%
+    PART = "part"            # reusable intermediate artifact
+    SKILL = "skill"          # machine-executable process
+    WORKER_CONFIG = "worker"  # complete specialized configuration
+    PRODUCT = "product"      # finished goods (API, model, service)
+
+
+class AssetVersionStatus(str, Enum):
+    """Is this asset still valid?"""
+    CURRENT = "current"        # works with latest benchmark
+    STALE = "stale"            # may not work with latest
+    BROKEN = "broken"          # confirmed incompatible
+    UNVERIFIED = "unverified"  # never tested
+
+
+class MarketAction(str, Enum):
+    """What can you do in the Market?"""
+    BUY = "buy"          # purchase existing artifact
+    LEASE = "lease"      # temporary capability/access
+    REQUEST = "request"  # custom part needed
+    SERVICE = "service"  # repeatable callable capability
+    WORKER = "worker"    # complete agent configuration
+
+
 # ─── Opportunity: the universal top-level object ─────────────────────
 
 class OpportunityType(str, Enum):
@@ -241,6 +268,68 @@ class Attempt:
         if outcome != Outcome.PENDING:
             self.completed_at = now
         self.duration_seconds = now - self.started_at
+
+
+# ─── Asset (Market primitive) ────────────────────────────────────────
+
+@dataclass
+class Asset:
+    """A productive asset in the Moltwork Market.
+
+    Six classes: Sample, Starter, Part, Skill, Worker, Product.
+    Each carries provenance, versioning, and economic evidence.
+    """
+    id: str = ""
+    name: str = ""
+    asset_type: AssetType = AssetType.PART
+    version: str = "1.0.0"
+    version_status: AssetVersionStatus = AssetVersionStatus.UNVERIFIED
+
+    # What it targets
+    targets: list[str] = field(default_factory=list)  # ["bittensor:sn118", "near:bounty"]
+
+    # What it needs
+    required_tools: list[str] = field(default_factory=list)
+    required_skills: list[str] = field(default_factory=list)
+
+    # Benchmark evidence
+    benchmark_name: str = ""
+    benchmark_version: str = ""
+    benchmark_score: float = 0.0
+    benchmark_verified_at: str = ""
+
+    # Provenance
+    creator: str = ""
+    source_commit: str = ""
+    artifact_hash: str = ""
+
+    # Economics
+    price_usd: float = 0.0
+    historical_execution_cost_usd: float = 0.0
+
+    # Outcomes
+    buyers: int = 0
+    successful_reproductions: int = 0
+    subsequent_wins: int = 0
+
+    # Rights
+    can_modify: bool = True
+    can_resubmit: bool = True
+    can_resell_derivatives: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "name": self.name,
+            "asset_type": self.asset_type.value,
+            "version": self.version,
+            "version_status": self.version_status.value,
+            "targets": self.targets,
+            "benchmark_score": self.benchmark_score,
+            "price_usd": self.price_usd,
+            "buyers": self.buyers,
+            "successful_reproductions": self.successful_reproductions,
+            "subsequent_wins": self.subsequent_wins,
+        }
 
 
 # ─── Strategy / PnL ─────────────────────────────────────────────────
