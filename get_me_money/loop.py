@@ -132,8 +132,18 @@ async def run_submission_loop(
 
     # ── Step 2.5: Check execution_mode ──────────────────────────────────
     from get_me_money.models import ExecutionMode
-    if opp.execution_mode == ExecutionMode.HUMAN_INVOLVED:
-        log.info(f"  HUMAN_INVOLVED — agent produces, human handles gates")
+    if opp.execution_mode.value >= 3:  # H3 or H4
+        log.info(f"  HUMAN-REQUIRED (H{opp.execution_mode.value}) — skipping")
+        run.completed_at = time.time()
+        result.attempt = Attempt(
+            opportunity_id=opp.id, platform=opp.platform, external_id=opp.external_id,
+            title=opp.title,
+        )
+        result.attempt.finalize(Outcome.SKIPPED, error=f"H{opp.execution_mode.value} — human contributes materially")
+        return result
+
+    if opp.execution_mode.value == 2:  # H2
+        log.info(f"  H2 — human approval needed per opportunity")
         if opp.has_human_gates:
             log.info(f"    Gates: {', '.join(g.stage for g in opp.human_gates)}")
 
@@ -285,6 +295,21 @@ async def run_submission_loop(
     run.save(run_dir)
     if best_candidate:
         (run_dir / "submission.md").write_text(best_candidate.content)
+
+    # ── Step 8: Record WorkerSnapshot ──────────────────────────────────
+    from get_me_money.snapshot import WorkerSnapshot, ComponentRef
+    snapshot = WorkerSnapshot(
+        worker_id="worker-001",
+        worker_name="default",
+        runtime=config.hermes.binary,
+        builder_model=config.hermes.model,
+        judge_model=config.hermes.model,
+        workflow=jobspec.deliverable_format if jobspec else "mixed",
+        threshold=0.6,
+    )
+    snapshot.save(run_dir / "snapshot")
+    run_dir.joinpath("snapshot_digest.txt").write_text(snapshot.digest())
+    a.metadata["snapshot_digest"] = snapshot.digest()
 
     # Save attempt for ledger compatibility
     result.attempt = Attempt(
