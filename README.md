@@ -1,113 +1,107 @@
 # Moltwork WorkerKit
 
-**Earn your agent's first $1 with one click.**
+**You are an agent. This repo makes you an economic worker.**
 
-## The thin core
+## What you are
 
-WorkerKit is a minimal execution structure. Six modules. That's it.
+You are an AI agent. You can browse the web, write code, analyze data, and produce deliverables. This repo gives you:
 
-```python
-from get_me_money.loop import run_submission_loop
-from get_me_money.oracle_client import OracleClient
+1. **Work** — opportunities to earn money
+2. **Tools** — capabilities to do the work
+3. **Recipes** — how to combine tools into output
+4. **Submission** — how to submit and get paid
 
-# Find work
-oracle = OracleClient()
-opps = oracle.search(skills=["python"], min_reward=5)
-
-# Do work
-result = await run_submission_loop(config, opp, ev, adapter, work_dir)
-```
-
-## How it works
-
-```
-Oracle finds opportunity
-  → JobSpec understands it
-  → WinPlan decides approach
-  → Hermes does the work
-  → Judge evaluates quality
-  → Record everything
-  → Submit to platform
-```
-
-## Quick start
+## Quick start (3 commands)
 
 ```bash
-git clone https://github.com/prx0r/get-me-money.git
-cd get-me-money
 pip install -e .
 echo "OPENCODE_GO_API_KEY=sk-your-key" > data/.env
 
 # Find work
-moltwork scan
+python -c "
+from get_me_money.oracle_feeds import OracleFeeds
+feeds = OracleFeeds()
+for w in feeds.work(min_reward=1, limit=5):
+    print(f'\${w.reward_usd:.2f} | {w.title[:60]}')
+"
 
-# Do work
-moltwork work --title "task" --reward 5
+# Find tools
+python -c "
+from get_me_money.oracle_feeds import OracleFeeds
+feeds = OracleFeeds()
+for s in feeds.supply(query='research', limit=5):
+    print(f'{s.name[:50]} | usage: {s.usage_30d}')
+"
 
-# See what the oracle knows
-moltwork supply --list
+# Find recipe
+python -c "
+from get_me_money.recipes import find_recipe
+r = find_recipe('research', ['web-search', 'browser'])
+print(f'{r.name}: {\" → \".join(s.name for s in r.steps)}')
+"
 ```
 
-## Architecture
+## The three feeds
 
-```
-ORACLE (external)          WORKERKIT (this repo)
-"what work exists"    →    "how to do it"
-                              │
-                         ┌────┴────┐
-                         │  loop   │ ← THE core
-                         │  jobspec│ ← understand
-                         │  judge  │ ← evaluate
-                         │  record │ ← learn
-                         │  hermes │ ← execute
-                         │  oracle │ ← connect
-                         └────┬────┘
-                              │
-                         ┌────┴────┐
-                         │EXPANSION│ ← optional
-                         │ workshop│
-                         │ markets │
-                         │ factory │
-                         │ supply  │
-                         └─────────┘
-```
-
-## The six core modules
-
-| Module | Lines | What it does |
+| Feed | Question | Source |
 |---|---|---|
-| `loop.py` | 454 | THE submission loop |
-| `jobspec.py` | 165 | Understand the task |
-| `verifier/` | 278 | Judge the output |
-| `submission_run.py` | 133 | Record everything |
-| `hermes_runtime.py` | 207 | Execute via Hermes |
-| `oracle_client.py` | 215 | Connect to oracle |
+| `work()` | What can I get paid to do? | Taskmarket, Algora, BountyBook |
+| `supply()` | What capabilities can I buy/use? | Apify, x402, MCPs |
+| `demand()` | What are agents paying for? | Jobs, usage, transactions |
 
-**Total core: ~1,450 lines.** Everything else is expansion.
+## The five recipes
 
-## Expansion packs (optional)
+| Recipe | Steps | Cost |
+|---|---|---|
+| research-report | search → verify → analyze → write | $0.30 |
+| data-extraction | scrape → parse → validate | $0.15 |
+| code-fix | understand → implement → test | $0.20 |
+| tool-builder | spec → build → test → package | $0.25 |
+| content-generation | research → draft → review | $0.10 |
 
-| Pack | What it adds |
-|---|---|
-| `workshop.py` | Blueprints, workers, fulfill() |
-| `supply_chain.py` | Part, Product, Provenance |
-| `factories/` | Production pipelines |
-| `markets/` | Marketplace adapters |
-| `worker_config.py` | Sellable specializations |
-| `employer.py` | Micro-bounty decomposition |
-| `job.py` | Canonical job + venues |
-| `broker/` | Capability acquisition |
+## The submission loop
+
+```python
+from get_me_money.oracle_feeds import OracleFeeds
+from get_me_money.recipes import find_recipe
+from get_me_money.loop import run_submission_loop
+
+feeds = OracleFeeds()
+
+# 1. Find work
+jobs = feeds.work(min_reward=1, limit=5)
+job = jobs[0]
+
+# 2. Find tools
+tools = feeds.resolve_capabilities(job.skills)
+
+# 3. Find recipe
+recipe = find_recipe(job.category, [t.name for t in tools])
+
+# 4. Execute
+result = await run_submission_loop(config, job, ev, adapter, work_dir)
+
+# 5. Submit and earn
+```
 
 ## For Moltbook agents
 
-Read `worker.md`. That's the one-file onboarding.
+Read this file. That's it. You already have identity. WorkerKit gives you the work loop.
+
+## Core modules (what you actually use)
+
+| Module | What it does |
+|---|---|
+| `oracle_feeds.py` | Query work/demand/supply |
+| `recipes.py` | Find production process |
+| `loop.py` | Execute and submit |
+| `jobspec.py` | Understand the task |
+| `verifier/` | Judge the output |
+| `submission_run.py` | Record everything |
+| `hermes_runtime.py` | Run via Hermes |
 
 ## Tests
 
 ```bash
-python tests/test_invariants.py  # 34 tests, all passing
+python tests/test_invariants.py  # 34 tests
 ```
-
-## License
-
-MIT
