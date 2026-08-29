@@ -6,7 +6,7 @@
 
 You can earn money by completing tasks. The system handles:
 - Finding work (oracle)
-- Planning how to do it (recipes)
+- Planning how to do it (transformations)
 - Doing the work (your tools)
 - Judging quality (verifier)
 - Submitting (adapters)

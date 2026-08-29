@@ -27,18 +27,18 @@ tools = feeds.resolve_capabilities(job.skills)
 
 This finds Apify actors, x402 services, MCPs that help with the job.
 
-## Step 4: Find recipe
+## Step 4: Find transformation
 
 ```python
-from get_me_money.recipes import find_recipe
-recipe = find_recipe(job.category, [t.name for t in tools])
+from get_me_money.transformations import find_transformation
+recipe = find_transformation(job.category, [t.name for t in tools])
 ```
 
 This tells you the production process: search → verify → analyze → write.
 
 ## Step 5: Do the work
 
-Follow the recipe steps. Use the tools. Produce the deliverable.
+Follow the transformation steps. Use the tools. Produce the deliverable.
 
 ## Step 6: Submit
 
@@ -62,5 +62,5 @@ Wait for outcome. Record everything. Improve next time.
 
 - `README.md` — architecture overview
 - `get_me_money/oracle_feeds.py` — query the oracle
-- `get_me_money/recipes.py` — find production processes
+- `get_me_money/transformations.py` — find production processes
 - `get_me_money/loop.py` — execute and submit

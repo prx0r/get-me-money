@@ -56,7 +56,7 @@ class Recipe:
 
 # ─── Starter recipes ─────────────────────────────────────────────────
 
-RECIPES = {
+TRANSFORMATIONS = {
     "research-report": Recipe(
         id="research-report",
         name="Research Report",
@@ -148,13 +148,13 @@ RECIPES = {
 }
 
 
-def find_recipe(work_type: str, available_tools: list[str]) -> Recipe | None:
+def find_transformation(work_type: str, available_tools: list[str]) -> Recipe | None:
     """Find the best recipe for a work type given available tools."""
-    for recipe in RECIPES.values():
+    for recipe in TRANSFORMATIONS.values():
         if recipe.work_type == work_type and recipe.can_execute(available_tools):
             return recipe
     return None
 
 
-def list_recipes() -> list[Recipe]:
-    return list(RECIPES.values())
+def list_transformations() -> list[Recipe]:
+    return list(TRANSFORMATIONS.values())

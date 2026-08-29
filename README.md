@@ -33,10 +33,10 @@ for s in feeds.supply(query='research', limit=5):
     print(f'{s.name[:50]} | usage: {s.usage_30d}')
 "
 
-# Find recipe
+# Find transformation
 python -c "
-from get_me_money.recipes import find_recipe
-r = find_recipe('research', ['web-search', 'browser'])
+from get_me_money.transformations import find_transformation
+r = find_transformation('research', ['web-search', 'browser'])
 print(f'{r.name}: {\" → \".join(s.name for s in r.steps)}')
 "
 ```
@@ -49,7 +49,7 @@ print(f'{r.name}: {\" → \".join(s.name for s in r.steps)}')
 | `supply()` | What capabilities can I buy/use? | Apify, x402, MCPs |
 | `demand()` | What are agents paying for? | Jobs, usage, transactions |
 
-## The five recipes
+## The five transformations
 
 | Recipe | Steps | Cost |
 |---|---|---|
@@ -63,7 +63,7 @@ print(f'{r.name}: {\" → \".join(s.name for s in r.steps)}')
 
 ```python
 from get_me_money.oracle_feeds import OracleFeeds
-from get_me_money.recipes import find_recipe
+from get_me_money.transformations import find_transformation
 from get_me_money.loop import run_submission_loop
 
 feeds = OracleFeeds()
@@ -75,8 +75,8 @@ job = jobs[0]
 # 2. Find tools
 tools = feeds.resolve_capabilities(job.skills)
 
-# 3. Find recipe
-recipe = find_recipe(job.category, [t.name for t in tools])
+# 3. Find transformation
+recipe = find_transformation(job.category, [t.name for t in tools])
 
 # 4. Execute
 result = await run_submission_loop(config, job, ev, adapter, work_dir)
@@ -93,7 +93,7 @@ Read this file. That's it. You already have identity. WorkerKit gives you the wo
 | Module | What it does |
 |---|---|
 | `oracle_feeds.py` | Query work/demand/supply |
-| `recipes.py` | Find production process |
+| `transformations.py` | Find production process |
 | `loop.py` | Execute and submit |
 | `jobspec.py` | Understand the task |
 | `verifier/` | Judge the output |
